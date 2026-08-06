@@ -94,42 +94,40 @@ export async function createProductionOrder(
   const orderNumber = await generateOrderNumber();
   const quantity = params.quantity;
 
-  const order = await prisma.$transaction(async (tx) => {
-    // 1. 创建工单头
-    const header = await tx.productionOrder.create({
-      data: {
-        orderNumber,
-        status: 'DRAFT',
-        productId: params.productId,
-        quantity,
-        unitOfMeasureId: params.unitOfMeasureId,
-        bomId: params.bomId,
-        plannedStartDate: params.plannedStartDate ? new Date(params.plannedStartDate) : null,
-        plannedEndDate: params.plannedEndDate ? new Date(params.plannedEndDate) : null,
-        createdById: userId,
-        notes: params.notes,
-      },
-    });
-
-    // 2. 根据 BOM 行创建工单组件
-    const components = await Promise.all(
-      bom.lines.map((line) =>
-        tx.productionOrderComponent.create({
-          data: {
-            productionOrderId: header.id,
-            lineNumber: line.lineNumber,
-            materialId: line.materialId,
-            unitOfMeasureId: line.unitOfMeasureId,
-            // 按 BOM 用量 * 工单数量 / BOM基础数量 计算计划用量
-            plannedQuantity: (line.quantity * quantity) / bom.baseQuantity,
-            notes: line.notes,
-          },
-        }),
-      ),
-    );
-
-    return { ...header, components };
+  // 1. 创建工单头
+  const header = await prisma.productionOrder.create({
+    data: {
+      orderNumber,
+      status: 'DRAFT',
+      productId: params.productId,
+      quantity,
+      unitOfMeasureId: params.unitOfMeasureId,
+      bomId: params.bomId,
+      plannedStartDate: params.plannedStartDate ? new Date(params.plannedStartDate) : null,
+      plannedEndDate: params.plannedEndDate ? new Date(params.plannedEndDate) : null,
+      createdById: userId,
+      notes: params.notes,
+    },
   });
+
+  // 2. 根据 BOM 行创建工单组件
+  const components = await Promise.all(
+    bom.lines.map((line) =>
+      prisma.productionOrderComponent.create({
+        data: {
+          productionOrderId: header.id,
+          lineNumber: line.lineNumber,
+          materialId: line.materialId,
+          unitOfMeasureId: line.unitOfMeasureId,
+          // 按 BOM 用量 * 工单数量 / BOM基础数量 计算计划用量
+          plannedQuantity: (line.quantity * quantity) / bom.baseQuantity,
+          notes: line.notes,
+        },
+      }),
+    ),
+  );
+
+  const order = { ...header, components };
 
   return order;
 }

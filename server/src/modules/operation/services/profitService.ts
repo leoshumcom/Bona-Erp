@@ -6,127 +6,126 @@ import { prisma } from '../../../common/prisma';
 // ============================================================
 
 export async function calculateOrderProfit(orderId: string, userId: string) {
-  return prisma.$transaction(async (tx) => {
-    // 0. 获取订单基本信息（含明细和店铺）
-    const order = await tx.order.findUniqueOrThrow({
-      where: { id: orderId },
-      include: {
-        items: { include: { product: true } },
-        store: true,
-        fees: true,
-        logistics: true,
-      },
-    });
-
-    const revenue = order.totalAmount; // 销售额
-
-    // 1. 生产成本：按订单中每个产品行分别核算
-    //    = SUM(ProductionOrder.ProductionCost where productionOrder.productId = 该产品) / completedQuantity * orderItem.quantity
-    let totalProductCost = 0;
-
-    for (const item of order.items) {
-      const productCost = await getProductCostPerUnit(tx, item.productId);
-      const itemCost = productCost * item.quantity;
-      totalProductCost = totalProductCost + itemCost;
-    }
-
-    // 2. 仓储分摊成本：当月仓储费用 / 当月总库存量 * 订单产品数量
-    let warehouseCost = 0;
-    try {
-      warehouseCost = await getWarehouseCostAllocation(tx, order);
-    } catch (err: any) {
-      console.error('Failed to calculate warehouse cost:', err.message);
-    }
-
-    // 3. 广告费分摊：订单所属店铺的广告花费 / 该店铺同期订单数
-    let adCost = 0;
-    try {
-      adCost = await getAdCostAllocation(tx, order);
-    } catch (err: any) {
-      console.error('Failed to calculate ad cost:', err.message);
-    }
-
-    // 4. 平台费用：从 OrderFee 中汇总 platform_commission
-    const platformFee = order.fees
-      .filter((f) => f.feeType === 'platform_commission')
-      .reduce((sum, f) => sum + f.amount, 0);
-
-    // 5. 物流费用：从 Logistics 或 OrderFee 中汇总
-    const logisticsFee = order.fees
-      .filter((f) => f.feeType === 'logistics')
-      .reduce((sum, f) => sum + f.amount, 0);
-
-    const logisticsTotalFee = order.logistics
-      ? order.logistics.totalFee + logisticsFee
-      : logisticsFee;
-
-    // 6. 售后费用：合计该订单所有售后记录
-    const afterSalesRecords = await tx.afterSales.findMany({
-      where: { orderId },
-    });
-
-    let aftersalesFee = 0;
-    for (const as of afterSalesRecords) {
-      if (as.refundAmount) aftersalesFee = aftersalesFee + as.refundAmount;
-      if (as.logisticsFee) aftersalesFee = aftersalesFee + as.logisticsFee;
-      if (as.compensation) aftersalesFee = aftersalesFee + as.compensation;
-      if (as.lossAmount) aftersalesFee = aftersalesFee + as.lossAmount;
-    }
-
-    // 7. 计算总成本和利润
-    const totalCost = totalProductCost + warehouseCost + adCost + platformFee + logisticsTotalFee + aftersalesFee;
-
-    const netProfit = revenue - totalCost;
-
-    // 利润率（净利率）
-    const profitMargin = revenue > 0
-      ? netProfit / revenue
-      : 0;
-
-    // 8. 创建或更新 OrderProfit 记录
-    const profitData = {
-      salesAmount: revenue,
-      refundAmount: aftersalesFee, // 售后费用归入退款
-      productCost: totalProductCost,
-      warehouseCost,
-      platformFee,
-      adFee: adCost,
-      logisticsFee: logisticsTotalFee,
-      aftersalesFee,
-      taxFee: 0,
-      grossProfit: revenue - totalProductCost,
-      netProfit,
-      profitMargin,
-      calculatedAt: new Date(),
-    };
-
-    const orderProfit = await tx.orderProfit.upsert({
-      where: { orderId },
-      create: {
-        orderId,
-        ...profitData,
-      },
-      update: {
-        ...profitData,
-      },
-    });
-
-    return {
-      orderProfit,
-      breakdown: {
-        revenue: Number(revenue),
-        productCost: Number(totalProductCost),
-        warehouseCost: Number(warehouseCost),
-        adCost: Number(adCost),
-        platformFee: Number(platformFee),
-        logisticsFee: Number(logisticsTotalFee),
-        aftersalesFee: Number(aftersalesFee),
-        totalCost: Number(totalCost),
-        netProfit: Number(netProfit),
-        profitMargin: Number(profitMargin),
-      },
-    };
+  // D1: sequential (no interactive tx)
+  // 0. 获取订单基本信息（含明细和店铺）
+  const order = await prisma.order.findUniqueOrThrow({
+    where: { id: orderId },
+    include: {
+      items: { include: { product: true } },
+      store: true,
+      fees: true,
+      logistics: true,
+    },
   });
+
+  const revenue = order.totalAmount; // 销售额
+
+  // 1. 生产成本：按订单中每个产品行分别核算
+  //    = SUM(ProductionOrder.ProductionCost where productionOrder.productId = 该产品) / completedQuantity * orderItem.quantity
+  let totalProductCost = 0;
+
+  for (const item of order.items) {
+    const productCost = await getProductCostPerUnit(prisma, item.productId);
+    const itemCost = productCost * item.quantity;
+    totalProductCost = totalProductCost + itemCost;
+  }
+
+  // 2. 仓储分摊成本：当月仓储费用 / 当月总库存量 * 订单产品数量
+  let warehouseCost = 0;
+  try {
+    warehouseCost = await getWarehouseCostAllocation(prisma, order);
+  } catch (err: any) {
+    console.error('Failed to calculate warehouse cost:', err.message);
+  }
+
+  // 3. 广告费分摊：订单所属店铺的广告花费 / 该店铺同期订单数
+  let adCost = 0;
+  try {
+    adCost = await getAdCostAllocation(prisma, order);
+  } catch (err: any) {
+    console.error('Failed to calculate ad cost:', err.message);
+  }
+
+  // 4. 平台费用：从 OrderFee 中汇总 platform_commission
+  const platformFee = order.fees
+    .filter((f) => f.feeType === 'platform_commission')
+    .reduce((sum, f) => sum + f.amount, 0);
+
+  // 5. 物流费用：从 Logistics 或 OrderFee 中汇总
+  const logisticsFee = order.fees
+    .filter((f) => f.feeType === 'logistics')
+    .reduce((sum, f) => sum + f.amount, 0);
+
+  const logisticsTotalFee = order.logistics
+    ? order.logistics.totalFee + logisticsFee
+    : logisticsFee;
+
+  // 6. 售后费用：合计该订单所有售后记录
+  const afterSalesRecords = await prisma.afterSales.findMany({
+    where: { orderId },
+  });
+
+  let aftersalesFee = 0;
+  for (const as of afterSalesRecords) {
+    if (as.refundAmount) aftersalesFee = aftersalesFee + as.refundAmount;
+    if (as.logisticsFee) aftersalesFee = aftersalesFee + as.logisticsFee;
+    if (as.compensation) aftersalesFee = aftersalesFee + as.compensation;
+    if (as.lossAmount) aftersalesFee = aftersalesFee + as.lossAmount;
+  }
+
+  // 7. 计算总成本和利润
+  const totalCost = totalProductCost + warehouseCost + adCost + platformFee + logisticsTotalFee + aftersalesFee;
+
+  const netProfit = revenue - totalCost;
+
+  // 利润率（净利率）
+  const profitMargin = revenue > 0
+    ? netProfit / revenue
+    : 0;
+
+  // 8. 创建或更新 OrderProfit 记录
+  const profitData = {
+    salesAmount: revenue,
+    refundAmount: aftersalesFee, // 售后费用归入退款
+    productCost: totalProductCost,
+    warehouseCost,
+    platformFee,
+    adFee: adCost,
+    logisticsFee: logisticsTotalFee,
+    aftersalesFee,
+    taxFee: 0,
+    grossProfit: revenue - totalProductCost,
+    netProfit,
+    profitMargin,
+    calculatedAt: new Date(),
+  };
+
+  const orderProfit = await prisma.orderProfit.upsert({
+    where: { orderId },
+    create: {
+      orderId,
+      ...profitData,
+    },
+    update: {
+      ...profitData,
+    },
+  });
+
+  return {
+    orderProfit,
+    breakdown: {
+      revenue: Number(revenue),
+      productCost: Number(totalProductCost),
+      warehouseCost: Number(warehouseCost),
+      adCost: Number(adCost),
+      platformFee: Number(platformFee),
+      logisticsFee: Number(logisticsTotalFee),
+      aftersalesFee: Number(aftersalesFee),
+      totalCost: Number(totalCost),
+      netProfit: Number(netProfit),
+      profitMargin: Number(profitMargin),
+    },
+  };
 }
 
 // ============================================================

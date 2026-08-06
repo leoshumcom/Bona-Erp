@@ -109,8 +109,8 @@ function writeAuditLog(
       entityId: params.entityId,
       action: params.action,
       actorId: params.actorId,
-      beforeState: params.beforeState as any ?? undefined,
-      afterState: params.afterState as any ?? undefined,
+      beforeState: params.beforeState != null ? JSON.stringify(params.beforeState) : undefined,
+      afterState: params.afterState != null ? JSON.stringify(params.afterState) : undefined,
     },
   });
 }
@@ -124,7 +124,8 @@ async function selectFIFOLots(
   storageLocationId: string,
   neededQuantity: number,
 ) {
-  const lots = await tx.materialLot.findMany({
+  // 先从原材料批次查找
+  const materialLots = await tx.materialLot.findMany({
     where: {
       productId,
       storageLocationId,
@@ -133,7 +134,29 @@ async function selectFIFOLots(
     orderBy: { receivedAt: 'asc' },
   });
 
-  return computeFIFOAllocation(lots as unknown as LotLike[], neededQuantity);
+  if (materialLots.length > 0) {
+    return computeFIFOAllocation(materialLots as unknown as LotLike[], neededQuantity);
+  }
+
+  // 再从成品批次查找
+  const finishedLots = await tx.finishedGoodLot.findMany({
+    where: {
+      productId,
+      storageLocationId,
+      quantity: { gt: 0 },
+    },
+    orderBy: { receivedAt: 'asc' },
+  });
+
+  // 成品批次用quantity而非quantityRemaining，转换字段名
+  const mappedLots = finishedLots.map(l => ({
+    id: l.id,
+    quantityRemaining: l.quantity,
+    unitCost: 0, // 成品成本由财务模块计算
+    receivedAt: l.receivedAt,
+  }));
+
+  return computeFIFOAllocation(mappedLots, neededQuantity);
 }
 
 /**
@@ -188,10 +211,20 @@ async function batchDeductLots(
 ) {
   const lotIds = allocation.map((a) => a.lotId);
 
-  // 一次查询获取所有涉及批次的当前数据
-  const lotsMap = new Map(
+  // 先查原材料批次
+  let lotsMap = new Map(
     (await tx.materialLot.findMany({ where: { id: { in: lotIds } } })).map((l) => [l.id, l]),
   );
+  
+  let isFinishedGood = false;
+  
+  // 如果没找到，查成品批次
+  if (lotsMap.size === 0) {
+    isFinishedGood = true;
+    lotsMap = new Map(
+      (await tx.finishedGoodLot.findMany({ where: { id: { in: lotIds } } })).map((l) => [l.id, l]),
+    );
+  }
 
   let totalCostConsumed = 0;
   const consumptions: Array<{ lotId: string; consumeQuantity: string; unitCost: string }> = [];
@@ -201,14 +234,21 @@ async function batchDeductLots(
     if (!lot) throw new Error(`批次 ${alloc.lotId} 不存在`);
 
     // 更新批次剩余数量
-    const newRemaining = lot.quantityRemaining - alloc.consumeQuantity;
-    await tx.materialLot.update({
-      where: { id: alloc.lotId },
-      data: { quantityRemaining: newRemaining },
-    });
+    const newRemaining = (lot as any).quantityRemaining ?? (lot as any).quantity - alloc.consumeQuantity;
+    if (isFinishedGood) {
+      await (tx as any).finishedGoodLot.update({
+        where: { id: alloc.lotId },
+        data: { quantity: newRemaining },
+      });
+    } else {
+      await tx.materialLot.update({
+        where: { id: alloc.lotId },
+        data: { quantityRemaining: newRemaining },
+      });
+    }
 
     // 记录消耗
-    if (productionOrderComponentId) {
+    if (productionOrderComponentId && !isFinishedGood) {
       await tx.materialLotConsumption.create({
         data: {
           productionOrderComponentId,
@@ -336,61 +376,58 @@ export async function inboundProduction(
     notes?: string;
   },
 ) {
-  const result = await prisma.$transaction(async (tx) => {
-    // 1. 验证生产工单存在
-    const po = await tx.productionOrder.findUniqueOrThrow({
-      where: { id: params.productionOrderId },
-    });
-
-    // 2. 生成成品批次
-    const lotNumber = generateLotNumber('FG');
-    const lot = await tx.finishedGoodLot.create({
-      data: {
-        lotNumber,
-        productId: params.productId,
-        productionOrderId: params.productionOrderId,
-        quantity: params.quantity,
-        unitOfMeasureId: params.unitOfMeasureId,
-        storageLocationId: params.storageLocationId,
-      },
-    });
-
-    // 3. 创建库存账本记录
-    const ledger = await createLedger(tx, {
-      movementType: 'GOODS_RECEIPT',
-      productId: params.productId,
-      storageLocationId: params.storageLocationId,
-      quantity: params.quantity,
-      unitOfMeasureId: params.unitOfMeasureId,
-      unitCost: params.unitCost,
-      referenceType: 'ProductionOrder',
-      referenceId: params.productionOrderId,
-      postedById: operatorId,
-      notes: params.notes,
-    });
-
-    // 4. 更新库存余额
-    const costTotal = params.quantity * params.unitCost;
-    const balance = await upsertBalance(tx, {
-      productId: params.productId,
-      storageLocationId: params.storageLocationId,
-      quantityDelta: params.quantity,
-      costDelta: costTotal,
-      unitOfMeasureId: params.unitOfMeasureId,
-    });
-
-    // 5. 更新工单完工数量
-    await tx.productionOrder.update({
-      where: { id: params.productionOrderId },
-      data: {
-        completedQuantity: po.completedQuantity + params.quantity,
-      },
-    });
-
-    return { lot, ledger, balance };
+  // D1: sequential (no interactive tx)
+  // 1. 验证生产工单存在
+  const po = await prisma.productionOrder.findUniqueOrThrow({
+    where: { id: params.productionOrderId },
   });
 
-  return result;
+  // 2. 生成成品批次
+  const lotNumber = generateLotNumber('FG');
+  const lot = await prisma.finishedGoodLot.create({
+    data: {
+      lotNumber,
+      productId: params.productId,
+      productionOrderId: params.productionOrderId,
+      quantity: params.quantity,
+      unitOfMeasureId: params.unitOfMeasureId,
+      storageLocationId: params.storageLocationId,
+    },
+  });
+
+  // 3. 创建库存账本记录
+  const ledger = await createLedger(prisma, {
+    movementType: 'GOODS_RECEIPT',
+    productId: params.productId,
+    storageLocationId: params.storageLocationId,
+    quantity: params.quantity,
+    unitOfMeasureId: params.unitOfMeasureId,
+    unitCost: params.unitCost,
+    referenceType: 'ProductionOrder',
+    referenceId: params.productionOrderId,
+    postedById: operatorId,
+    notes: params.notes,
+  });
+
+  // 4. 更新库存余额
+  const costTotal = params.quantity * params.unitCost;
+  const balance = await upsertBalance(prisma, {
+    productId: params.productId,
+    storageLocationId: params.storageLocationId,
+    quantityDelta: params.quantity,
+    costDelta: costTotal,
+    unitOfMeasureId: params.unitOfMeasureId,
+  });
+
+  // 5. 更新工单完工数量
+  await prisma.productionOrder.update({
+    where: { id: params.productionOrderId },
+    data: {
+      completedQuantity: po.completedQuantity + params.quantity,
+    },
+  });
+
+  return { lot, ledger, balance };
 }
 
 /** 采购入库 */
@@ -407,54 +444,51 @@ export async function inboundPurchase(
     notes?: string;
   },
 ) {
-  const result = await prisma.$transaction(async (tx) => {
-    // 1. 生成物料批次
-    const lotNumber = generateLotNumber('PO');
-    const lot = await tx.materialLot.create({
-      data: {
-        lotNumber,
-        productId: params.productId,
-        quantityReceived: params.quantity,
-        quantityRemaining: params.quantity,
-        unitOfMeasureId: params.unitOfMeasureId,
-        unitCost: params.unitCost,
-        storageLocationId: params.storageLocationId,
-        sourceType: params.purchaseOrderId ? 'PurchaseOrder' : 'InitialStock',
-        sourceRefId: params.purchaseOrderId || '',
-        supplierId: params.supplierId,
-        receivedAt: new Date(),
-      },
-    });
-
-    // 2. 创建库存账本
-    const refId = params.purchaseOrderId || '';
-    const ledger = await createLedger(tx, {
-      movementType: 'PURCHASE_RECEIPT',
+  // D1: sequential (no interactive tx)
+  // 1. 生成物料批次
+  const lotNumber = generateLotNumber('PO');
+  const lot = await prisma.materialLot.create({
+    data: {
+      lotNumber,
       productId: params.productId,
-      storageLocationId: params.storageLocationId,
-      quantity: params.quantity,
+      quantityReceived: params.quantity,
+      quantityRemaining: params.quantity,
       unitOfMeasureId: params.unitOfMeasureId,
       unitCost: params.unitCost,
-      referenceType: params.purchaseOrderId ? 'PurchaseOrder' : 'Manual',
-      referenceId: refId || `MANUAL-${Date.now()}`,
-      postedById: operatorId,
-      notes: params.notes,
-    });
-
-    // 3. 更新库存余额
-    const costTotal = params.quantity * params.unitCost;
-    const balance = await upsertBalance(tx, {
-      productId: params.productId,
       storageLocationId: params.storageLocationId,
-      quantityDelta: params.quantity,
-      costDelta: costTotal,
-      unitOfMeasureId: params.unitOfMeasureId,
-    });
-
-    return { lot, ledger, balance };
+      sourceType: params.purchaseOrderId ? 'PurchaseOrder' : 'InitialStock',
+      sourceRefId: params.purchaseOrderId || '',
+      supplierId: params.supplierId,
+      receivedAt: new Date(),
+    },
   });
 
-  return result;
+  // 2. 创建库存账本
+  const refId = params.purchaseOrderId || '';
+  const ledger = await createLedger(prisma, {
+    movementType: 'PURCHASE_RECEIPT',
+    productId: params.productId,
+    storageLocationId: params.storageLocationId,
+    quantity: params.quantity,
+    unitOfMeasureId: params.unitOfMeasureId,
+    unitCost: params.unitCost,
+    referenceType: params.purchaseOrderId ? 'PurchaseOrder' : 'Manual',
+    referenceId: refId || `MANUAL-${Date.now()}`,
+    postedById: operatorId,
+    notes: params.notes,
+  });
+
+  // 3. 更新库存余额
+  const costTotal = params.quantity * params.unitCost;
+  const balance = await upsertBalance(prisma, {
+    productId: params.productId,
+    storageLocationId: params.storageLocationId,
+    quantityDelta: params.quantity,
+    costDelta: costTotal,
+    unitOfMeasureId: params.unitOfMeasureId,
+  });
+
+  return { lot, ledger, balance };
 }
 
 /** 售后退货入库 */
@@ -470,49 +504,46 @@ export async function inboundReturn(
     notes?: string;
   },
 ) {
-  const result = await prisma.$transaction(async (tx) => {
-    const lotNumber = generateLotNumber('AR');
-    const lot = await tx.materialLot.create({
-      data: {
-        lotNumber,
-        productId: params.productId,
-        quantityReceived: params.quantity,
-        quantityRemaining: params.quantity,
-        unitOfMeasureId: params.unitOfMeasureId,
-        unitCost: params.unitCost,
-        storageLocationId: params.storageLocationId,
-        sourceType: 'AfterSales',
-        sourceRefId: params.afterSalesId,
-        receivedAt: new Date(),
-      },
-    });
-
-    const ledger = await createLedger(tx, {
-      movementType: 'AFTERSALES_RETURN',
+  // D1: sequential (no interactive tx)
+  const lotNumber = generateLotNumber('AR');
+  const lot = await prisma.materialLot.create({
+    data: {
+      lotNumber,
       productId: params.productId,
-      storageLocationId: params.storageLocationId,
-      quantity: params.quantity,
+      quantityReceived: params.quantity,
+      quantityRemaining: params.quantity,
       unitOfMeasureId: params.unitOfMeasureId,
       unitCost: params.unitCost,
-      referenceType: 'AfterSales',
-      referenceId: params.afterSalesId,
-      postedById: operatorId,
-      notes: params.notes,
-    });
-
-    const costTotal = params.quantity * params.unitCost;
-    const balance = await upsertBalance(tx, {
-      productId: params.productId,
       storageLocationId: params.storageLocationId,
-      quantityDelta: params.quantity,
-      costDelta: costTotal,
-      unitOfMeasureId: params.unitOfMeasureId,
-    });
-
-    return { lot, ledger, balance };
+      sourceType: 'AfterSales',
+      sourceRefId: params.afterSalesId,
+      receivedAt: new Date(),
+    },
   });
 
-  return result;
+  const ledger = await createLedger(prisma, {
+    movementType: 'AFTERSALES_RETURN',
+    productId: params.productId,
+    storageLocationId: params.storageLocationId,
+    quantity: params.quantity,
+    unitOfMeasureId: params.unitOfMeasureId,
+    unitCost: params.unitCost,
+    referenceType: 'AfterSales',
+    referenceId: params.afterSalesId,
+    postedById: operatorId,
+    notes: params.notes,
+  });
+
+  const costTotal = params.quantity * params.unitCost;
+  const balance = await upsertBalance(prisma, {
+    productId: params.productId,
+    storageLocationId: params.storageLocationId,
+    quantityDelta: params.quantity,
+    costDelta: costTotal,
+    unitOfMeasureId: params.unitOfMeasureId,
+  });
+
+  return { lot, ledger, balance };
 }
 
 /** 期初库存导入 */
@@ -528,50 +559,47 @@ export async function inboundInitial(
     notes?: string;
   },
 ) {
-  const result = await prisma.$transaction(async (tx) => {
-    const lotNumber = generateLotNumber('INIT');
-    const lot = await tx.materialLot.create({
-      data: {
-        lotNumber,
-        productId: params.productId,
-        quantityReceived: params.quantity,
-        quantityRemaining: params.quantity,
-        unitOfMeasureId: params.unitOfMeasureId,
-        unitCost: params.unitCost,
-        storageLocationId: params.storageLocationId,
-        sourceType: 'InitialStock',
-        sourceRefId: `INIT-${Date.now()}`,
-        supplierId: params.supplierId,
-        receivedAt: new Date(),
-      },
-    });
-
-    const ledger = await createLedger(tx, {
-      movementType: 'INITIAL',
+  // D1: sequential (no interactive tx)
+  const lotNumber = generateLotNumber('INIT');
+  const lot = await prisma.materialLot.create({
+    data: {
+      lotNumber,
       productId: params.productId,
-      storageLocationId: params.storageLocationId,
-      quantity: params.quantity,
+      quantityReceived: params.quantity,
+      quantityRemaining: params.quantity,
       unitOfMeasureId: params.unitOfMeasureId,
       unitCost: params.unitCost,
-      referenceType: 'System',
-      referenceId: `INIT-${Date.now()}`,
-      postedById: operatorId,
-      notes: params.notes || '期初库存导入',
-    });
-
-    const costTotal = params.quantity * params.unitCost;
-    const balance = await upsertBalance(tx, {
-      productId: params.productId,
       storageLocationId: params.storageLocationId,
-      quantityDelta: params.quantity,
-      costDelta: costTotal,
-      unitOfMeasureId: params.unitOfMeasureId,
-    });
-
-    return { lot, ledger, balance };
+      sourceType: 'InitialStock',
+      sourceRefId: `INIT-${Date.now()}`,
+      supplierId: params.supplierId,
+      receivedAt: new Date(),
+    },
   });
 
-  return result;
+  const ledger = await createLedger(prisma, {
+    movementType: 'INITIAL',
+    productId: params.productId,
+    storageLocationId: params.storageLocationId,
+    quantity: params.quantity,
+    unitOfMeasureId: params.unitOfMeasureId,
+    unitCost: params.unitCost,
+    referenceType: 'System',
+    referenceId: `INIT-${Date.now()}`,
+    postedById: operatorId,
+    notes: params.notes || '期初库存导入',
+  });
+
+  const costTotal = params.quantity * params.unitCost;
+  const balance = await upsertBalance(prisma, {
+    productId: params.productId,
+    storageLocationId: params.storageLocationId,
+    quantityDelta: params.quantity,
+    costDelta: costTotal,
+    unitOfMeasureId: params.unitOfMeasureId,
+  });
+
+  return { lot, ledger, balance };
 }
 
 // ============================================================
@@ -596,65 +624,64 @@ export async function outboundIssue(
     notes?: string;
   },
 ) {
-  return prisma.$transaction(async (tx) => {
-    // 验证工单组件存在
-    const component = await tx.productionOrderComponent.findUniqueOrThrow({
-      where: { id: params.productionOrderComponentId },
-    });
-
-    // 记录审计前快照
-    const beforeBalance = await tx.inventoryBalance.findUnique({
-      where: {
-        productId_storageLocationId: {
-          productId: params.productId,
-          storageLocationId: params.storageLocationId,
-        },
-      },
-    });
-
-    // 执行标准出库流程
-    const outbound = await executeOutbound(tx, operatorId, {
-      movementType: 'MATERIAL_ISSUE',
-      productId: params.productId,
-      storageLocationId: params.storageLocationId,
-      quantity: params.quantity,
-      unitOfMeasureId: params.unitOfMeasureId,
-      referenceType: 'ProductionOrder',
-      referenceId: params.productionOrderComponentId,
-      productionOrderComponentId: params.productionOrderComponentId,
-      notes: params.notes,
-    });
-
-    // 业务联动: 更新工单组件已领数量
-    await tx.productionOrderComponent.update({
-      where: { id: params.productionOrderComponentId },
-      data: {
-        issuedQuantity: component.issuedQuantity + params.quantity,
-      },
-    });
-
-    // 补充库存变更前后快照到审计
-    await writeAuditLog(tx, {
-      entityType: 'InventoryBalance',
-      entityId: outbound.balance.id,
-      action: 'MATERIAL_ISSUE_BALANCE',
-      actorId: operatorId,
-      beforeState: beforeBalance
-        ? { quantityOnHand: beforeBalance.quantityOnHand.toString(), totalCost: beforeBalance.totalCost.toString() }
-        : undefined,
-      afterState: {
-        quantityOnHand: outbound.balance.quantityOnHand.toString(),
-        totalCost: outbound.balance.totalCost.toString(),
-      },
-    });
-
-    return {
-      ...outbound,
-      action: 'MATERIAL_ISSUE',
-      componentId: params.productionOrderComponentId,
-      issuedQuantity: (component.issuedQuantity + params.quantity).toString(),
-    };
+  // D1: sequential (no interactive tx)
+  // 验证工单组件存在
+  const component = await prisma.productionOrderComponent.findUniqueOrThrow({
+    where: { id: params.productionOrderComponentId },
   });
+
+  // 记录审计前快照
+  const beforeBalance = await prisma.inventoryBalance.findUnique({
+    where: {
+      productId_storageLocationId: {
+        productId: params.productId,
+        storageLocationId: params.storageLocationId,
+      },
+    },
+  });
+
+  // 执行标准出库流程
+  const outbound = await executeOutbound(prisma, operatorId, {
+    movementType: 'MATERIAL_ISSUE',
+    productId: params.productId,
+    storageLocationId: params.storageLocationId,
+    quantity: params.quantity,
+    unitOfMeasureId: params.unitOfMeasureId,
+    referenceType: 'ProductionOrder',
+    referenceId: params.productionOrderComponentId,
+    productionOrderComponentId: params.productionOrderComponentId,
+    notes: params.notes,
+  });
+
+  // 业务联动: 更新工单组件已领数量
+  await prisma.productionOrderComponent.update({
+    where: { id: params.productionOrderComponentId },
+    data: {
+      issuedQuantity: component.issuedQuantity + params.quantity,
+    },
+  });
+
+  // 补充库存变更前后快照到审计
+  await writeAuditLog(prisma, {
+    entityType: 'InventoryBalance',
+    entityId: outbound.balance.id,
+    action: 'MATERIAL_ISSUE_BALANCE',
+    actorId: operatorId,
+    beforeState: beforeBalance
+      ? { quantityOnHand: beforeBalance.quantityOnHand.toString(), totalCost: beforeBalance.totalCost.toString() }
+      : undefined,
+    afterState: {
+      quantityOnHand: outbound.balance.quantityOnHand.toString(),
+      totalCost: outbound.balance.totalCost.toString(),
+    },
+  });
+
+  return {
+    ...outbound,
+    action: 'MATERIAL_ISSUE',
+    componentId: params.productionOrderComponentId,
+    issuedQuantity: (component.issuedQuantity + params.quantity).toString(),
+  };
 }
 
 /**
@@ -675,65 +702,64 @@ export async function outboundShipment(
     notes?: string;
   },
 ) {
-  return prisma.$transaction(async (tx) => {
-    // 验证订单存在
-    const order = await tx.order.findUniqueOrThrow({
-      where: { id: params.orderId },
-    });
-
-    // 记录售前余额
-    const beforeBalance = await tx.inventoryBalance.findUnique({
-      where: {
-        productId_storageLocationId: {
-          productId: params.productId,
-          storageLocationId: params.storageLocationId,
-        },
-      },
-    });
-
-    // 执行标准出库流程
-    const outbound = await executeOutbound(tx, operatorId, {
-      movementType: 'SHIPMENT',
-      productId: params.productId,
-      storageLocationId: params.storageLocationId,
-      quantity: params.quantity,
-      unitOfMeasureId: params.unitOfMeasureId,
-      referenceType: 'Order',
-      referenceId: params.orderId,
-      notes: params.notes || `订单 ${order.orderNumber} 销售出库`,
-    });
-
-    // 业务联动: 更新订单发货状态
-    await tx.order.update({
-      where: { id: params.orderId },
-      data: {
-        shippingStatus: 'SHIPPED',
-        shippedAt: new Date(),
-      },
-    });
-
-    // 补充库存变更审计
-    await writeAuditLog(tx, {
-      entityType: 'InventoryBalance',
-      entityId: outbound.balance.id,
-      action: 'SHIPMENT_BALANCE',
-      actorId: operatorId,
-      beforeState: beforeBalance
-        ? { quantityOnHand: beforeBalance.quantityOnHand.toString(), totalCost: beforeBalance.totalCost.toString() }
-        : undefined,
-      afterState: {
-        quantityOnHand: outbound.balance.quantityOnHand.toString(),
-        totalCost: outbound.balance.totalCost.toString(),
-      },
-    });
-
-    return {
-      ...outbound,
-      action: 'SHIPMENT',
-      orderId: params.orderId,
-      orderNumber: order.orderNumber,
-    };
+  // D1: sequential (no interactive tx)
+  // 验证订单存在
+  const order = await prisma.order.findUniqueOrThrow({
+    where: { id: params.orderId },
   });
+
+  // 记录售前余额
+  const beforeBalance = await prisma.inventoryBalance.findUnique({
+    where: {
+      productId_storageLocationId: {
+        productId: params.productId,
+        storageLocationId: params.storageLocationId,
+      },
+    },
+  });
+
+  // 执行标准出库流程
+  const outbound = await executeOutbound(prisma, operatorId, {
+    movementType: 'SHIPMENT',
+    productId: params.productId,
+    storageLocationId: params.storageLocationId,
+    quantity: params.quantity,
+    unitOfMeasureId: params.unitOfMeasureId,
+    referenceType: 'Order',
+    referenceId: params.orderId,
+    notes: params.notes || `订单 ${order.orderNumber} 销售出库`,
+  });
+
+  // 业务联动: 更新订单发货状态
+  await prisma.order.update({
+    where: { id: params.orderId },
+    data: {
+      shippingStatus: 'SHIPPED',
+      shippedAt: new Date(),
+    },
+  });
+
+  // 补充库存变更审计
+  await writeAuditLog(prisma, {
+    entityType: 'InventoryBalance',
+    entityId: outbound.balance.id,
+    action: 'SHIPMENT_BALANCE',
+    actorId: operatorId,
+    beforeState: beforeBalance
+      ? { quantityOnHand: beforeBalance.quantityOnHand.toString(), totalCost: beforeBalance.totalCost.toString() }
+      : undefined,
+    afterState: {
+      quantityOnHand: outbound.balance.quantityOnHand.toString(),
+      totalCost: outbound.balance.totalCost.toString(),
+    },
+  });
+
+  return {
+    ...outbound,
+    action: 'SHIPMENT',
+    orderId: params.orderId,
+    orderNumber: order.orderNumber,
+  };
 }
 
 /**
@@ -754,103 +780,102 @@ export async function outboundReturnStock(
     notes?: string;
   },
 ) {
-  return prisma.$transaction(async (tx) => {
-    // 1. 追溯原始领料成本: 查询最近一次 MATERIAL_ISSUE 的平均成本
-    const recentIssue = await tx.inventoryLedger.findFirst({
-      where: {
-        productId: params.productId,
-        storageLocationId: params.storageLocationId,
-        movementType: 'MATERIAL_ISSUE',
-      },
-      orderBy: { postedAt: 'desc' },
-      select: { unitCost: true },
-    });
-
-    const unitCost = recentIssue?.unitCost ?? 0;
-    const costTotal = unitCost * params.quantity;
-
-    // 记录返库前余额
-    const beforeBalance = await tx.inventoryBalance.findUnique({
-      where: {
-        productId_storageLocationId: {
-          productId: params.productId,
-          storageLocationId: params.storageLocationId,
-        },
-      },
-    });
-
-    // 2. 生成退料批次
-    const lotNumber = generateLotNumber('RET');
-    const lot = await tx.materialLot.create({
-      data: {
-        lotNumber,
-        productId: params.productId,
-        quantityReceived: params.quantity,
-        quantityRemaining: params.quantity,
-        unitOfMeasureId: params.unitOfMeasureId,
-        unitCost,
-        storageLocationId: params.storageLocationId,
-        sourceType: 'ProductionOrder',
-        sourceRefId: params.productionOrderComponentId || `RETURN-${Date.now()}`,
-        receivedAt: new Date(),
-        notes: params.notes || '生产退料',
-      },
-    });
-
-    // 3. 创建库存账本（正数）
-    const ledger = await createLedger(tx, {
-      movementType: 'RETURN_TO_STOCK',
+  // D1: sequential (no interactive tx)
+  // 1. 追溯原始领料成本: 查询最近一次 MATERIAL_ISSUE 的平均成本
+  const recentIssue = await prisma.inventoryLedger.findFirst({
+    where: {
       productId: params.productId,
       storageLocationId: params.storageLocationId,
-      quantity: params.quantity,
-      unitOfMeasureId: params.unitOfMeasureId,
-      unitCost: Number(unitCost),
-      referenceType: 'ProductionOrder',
-      referenceId: params.productionOrderComponentId || `RETURN-${Date.now()}`,
-      postedById: operatorId,
-      notes: params.notes || '生产退料',
-    });
-
-    // 4. 更新库存余额
-    const balance = await upsertBalance(tx, {
-      productId: params.productId,
-      storageLocationId: params.storageLocationId,
-      quantityDelta: params.quantity,
-      costDelta: costTotal,
-      unitOfMeasureId: params.unitOfMeasureId,
-    });
-
-    // 5. 审计日志
-    await writeAuditLog(tx, {
-      entityType: 'InventoryLedger',
-      entityId: ledger.id,
-      action: 'RETURN_TO_STOCK',
-      actorId: operatorId,
-      afterState: {
-        productId: params.productId,
-        quantity: params.quantity,
-        unitCost: unitCost.toString(),
-        totalCost: costTotal.toString(),
-        lotNumber,
-      },
-    });
-
-    await writeAuditLog(tx, {
-      entityType: 'InventoryBalance',
-      entityId: balance.id,
-      action: 'RETURN_TO_STOCK_BALANCE',
-      actorId: operatorId,
-      beforeState: beforeBalance
-        ? { quantityOnHand: beforeBalance.quantityOnHand.toString(), totalCost: beforeBalance.totalCost.toString() }
-        : undefined,
-      afterState: {
-        quantityOnHand: balance.quantityOnHand.toString(),
-        totalCost: balance.totalCost.toString(),
-      },
-    });
-
-    return { lot, ledger, balance, tracedCost: unitCost.toString() };
+      movementType: 'MATERIAL_ISSUE',
+    },
+    orderBy: { postedAt: 'desc' },
+    select: { unitCost: true },
   });
+
+  const unitCost = recentIssue?.unitCost ?? 0;
+  const costTotal = unitCost * params.quantity;
+
+  // 记录返库前余额
+  const beforeBalance = await prisma.inventoryBalance.findUnique({
+    where: {
+      productId_storageLocationId: {
+        productId: params.productId,
+        storageLocationId: params.storageLocationId,
+      },
+    },
+  });
+
+  // 2. 生成退料批次
+  const lotNumber = generateLotNumber('RET');
+  const lot = await prisma.materialLot.create({
+    data: {
+      lotNumber,
+      productId: params.productId,
+      quantityReceived: params.quantity,
+      quantityRemaining: params.quantity,
+      unitOfMeasureId: params.unitOfMeasureId,
+      unitCost,
+      storageLocationId: params.storageLocationId,
+      sourceType: 'ProductionOrder',
+      sourceRefId: params.productionOrderComponentId || `RETURN-${Date.now()}`,
+      receivedAt: new Date(),
+      notes: params.notes || '生产退料',
+    },
+  });
+
+  // 3. 创建库存账本（正数）
+  const ledger = await createLedger(prisma, {
+    movementType: 'RETURN_TO_STOCK',
+    productId: params.productId,
+    storageLocationId: params.storageLocationId,
+    quantity: params.quantity,
+    unitOfMeasureId: params.unitOfMeasureId,
+    unitCost: Number(unitCost),
+    referenceType: 'ProductionOrder',
+    referenceId: params.productionOrderComponentId || `RETURN-${Date.now()}`,
+    postedById: operatorId,
+    notes: params.notes || '生产退料',
+  });
+
+  // 4. 更新库存余额
+  const balance = await upsertBalance(prisma, {
+    productId: params.productId,
+    storageLocationId: params.storageLocationId,
+    quantityDelta: params.quantity,
+    costDelta: costTotal,
+    unitOfMeasureId: params.unitOfMeasureId,
+  });
+
+  // 5. 审计日志
+  await writeAuditLog(prisma, {
+    entityType: 'InventoryLedger',
+    entityId: ledger.id,
+    action: 'RETURN_TO_STOCK',
+    actorId: operatorId,
+    afterState: {
+      productId: params.productId,
+      quantity: params.quantity,
+      unitCost: unitCost.toString(),
+      totalCost: costTotal.toString(),
+      lotNumber,
+    },
+  });
+
+  await writeAuditLog(prisma, {
+    entityType: 'InventoryBalance',
+    entityId: balance.id,
+    action: 'RETURN_TO_STOCK_BALANCE',
+    actorId: operatorId,
+    beforeState: beforeBalance
+      ? { quantityOnHand: beforeBalance.quantityOnHand.toString(), totalCost: beforeBalance.totalCost.toString() }
+      : undefined,
+    afterState: {
+      quantityOnHand: balance.quantityOnHand.toString(),
+      totalCost: balance.totalCost.toString(),
+    },
+  });
+
+  return { lot, ledger, balance, tracedCost: unitCost.toString() };
 }
 
 // ============================================================
@@ -901,29 +926,28 @@ export async function executeCountAdjust(
   }> = [];
 
   for (const adj of params.adjustments) {
-    const r = await prisma.$transaction(async (tx) => {
-      const ledger = await createLedger(tx, {
-        movementType: 'ADJUSTMENT',
-        productId: adj.productId,
-        storageLocationId: adj.storageLocationId,
-        quantity: adj.difference,
-        unitOfMeasureId: adj.unitOfMeasureId,
-        referenceType: 'CountPlan',
-        referenceId: params.countPlanId,
-        postedById: operatorId,
-        notes: adj.reason || '盘点调整',
-      });
-
-      const balance = await upsertBalance(tx, {
-        productId: adj.productId,
-        storageLocationId: adj.storageLocationId,
-        quantityDelta: adj.difference,
-        costDelta: 0, // 盘点调整不改成本
-        unitOfMeasureId: adj.unitOfMeasureId,
-      });
-
-      return { productId: adj.productId, difference: adj.difference, ledger, balance };
+    // D1: sequential (no interactive tx)
+    const ledger = await createLedger(prisma, {
+      movementType: 'ADJUSTMENT',
+      productId: adj.productId,
+      storageLocationId: adj.storageLocationId,
+      quantity: adj.difference,
+      unitOfMeasureId: adj.unitOfMeasureId,
+      referenceType: 'CountPlan',
+      referenceId: params.countPlanId,
+      postedById: operatorId,
+      notes: adj.reason || '盘点调整',
     });
+
+    const balance = await upsertBalance(prisma, {
+      productId: adj.productId,
+      storageLocationId: adj.storageLocationId,
+      quantityDelta: adj.difference,
+      costDelta: 0, // 盘点调整不改成本
+      unitOfMeasureId: adj.unitOfMeasureId,
+    });
+
+    const r = { productId: adj.productId, difference: adj.difference, ledger, balance };
 
     results.push(r);
   }

@@ -46,39 +46,37 @@ export async function createBOM(
   const version = await getNextVersion(params.productId);
   const bomNumber = generateBomNumber();
 
-  const bom = await prisma.$transaction(async (tx) => {
-    // 1. 创建 BOM 头
-    const header = await tx.billOfMaterials.create({
-      data: {
-        bomNumber,
-        productId: params.productId,
-        version,
-        status: 'DRAFT',
-        description: params.description,
-        baseQuantity: params.baseQuantity,
-        createdById: userId,
-      },
-    });
-
-    // 2. 批量创建 BOM 行
-    const lines = await Promise.all(
-      params.lines.map((line) =>
-        tx.billOfMaterialLine.create({
-          data: {
-            bomId: header.id,
-            lineNumber: line.lineNumber,
-            materialId: line.materialId,
-            quantity: line.quantity,
-            unitOfMeasureId: line.unitOfMeasureId,
-            scrapPercent: line.scrapPercent ?? 0,
-            notes: line.notes,
-          },
-        }),
-      ),
-    );
-
-    return { ...header, lines };
+  // 1. 创建 BOM 头
+  const header = await prisma.billOfMaterials.create({
+    data: {
+      bomNumber,
+      productId: params.productId,
+      version,
+      status: 'DRAFT',
+      description: params.description,
+      baseQuantity: params.baseQuantity,
+      createdById: userId,
+    },
   });
+
+  // 2. 批量创建 BOM 行
+  const lines = await Promise.all(
+    params.lines.map((line) =>
+      prisma.billOfMaterialLine.create({
+        data: {
+          bomId: header.id,
+          lineNumber: line.lineNumber,
+          materialId: line.materialId,
+          quantity: line.quantity,
+          unitOfMeasureId: line.unitOfMeasureId,
+          scrapPercent: line.scrapPercent ?? 0,
+          notes: line.notes,
+        },
+      }),
+    ),
+  );
+
+  const bom = { ...header, lines };
 
   return bom;
 }
@@ -145,36 +143,34 @@ export async function activateBOM(id: string) {
     select: { id: true, productId: true },
   });
 
-  return prisma.$transaction(async (tx) => {
-    // 1. 将该产品其他所有 ACTIVE BOM 设为 INACTIVE
-    await tx.billOfMaterials.updateMany({
-      where: {
-        productId: bom.productId,
-        status: 'ACTIVE',
-        id: { not: id },
-      },
-      data: { status: 'INACTIVE' },
-    });
+  // 1. 将该产品其他所有 ACTIVE BOM 设为 INACTIVE
+  await prisma.billOfMaterials.updateMany({
+    where: {
+      productId: bom.productId,
+      status: 'ACTIVE',
+      id: { not: id },
+    },
+    data: { status: 'INACTIVE' },
+  });
 
-    // 2. 激活目标 BOM
-    const activated = await tx.billOfMaterials.update({
-      where: { id },
-      data: {
-        status: 'ACTIVE',
-        activatedAt: new Date(),
-      },
-      include: {
-        lines: {
-          include: {
-            material: { select: { id: true, sku: true, name: true } },
-            unitOfMeasure: { select: { id: true, code: true } },
-          },
+  // 2. 激活目标 BOM
+  const activated = await prisma.billOfMaterials.update({
+    where: { id },
+    data: {
+      status: 'ACTIVE',
+      activatedAt: new Date(),
+    },
+    include: {
+      lines: {
+        include: {
+          material: { select: { id: true, sku: true, name: true } },
+          unitOfMeasure: { select: { id: true, code: true } },
         },
       },
-    });
-
-    return activated;
+    },
   });
+
+  return activated;
 }
 
 /** 复制 BOM 到新版本 */
@@ -189,37 +185,33 @@ export async function copyBOM(id: string) {
   const newVersion = await getNextVersion(source.productId);
   const bomNumber = generateBomNumber();
 
-  const newBom = await prisma.$transaction(async (tx) => {
-    const header = await tx.billOfMaterials.create({
-      data: {
-        bomNumber,
-        productId: source.productId,
-        version: newVersion,
-        status: 'DRAFT',
-        description: source.description,
-        baseQuantity: source.baseQuantity,
-        createdById: source.createdById,
-      },
-    });
-
-    await Promise.all(
-      source.lines.map((line) =>
-        tx.billOfMaterialLine.create({
-          data: {
-            bomId: header.id,
-            lineNumber: line.lineNumber,
-            materialId: line.materialId,
-            quantity: line.quantity,
-            unitOfMeasureId: line.unitOfMeasureId,
-            scrapPercent: line.scrapPercent,
-            notes: line.notes,
-          },
-        }),
-      ),
-    );
-
-    return header;
+  const header = await prisma.billOfMaterials.create({
+    data: {
+      bomNumber,
+      productId: source.productId,
+      version: newVersion,
+      status: 'DRAFT',
+      description: source.description,
+      baseQuantity: source.baseQuantity,
+      createdById: source.createdById,
+    },
   });
 
-  return newBom;
+  await Promise.all(
+    source.lines.map((line) =>
+      prisma.billOfMaterialLine.create({
+        data: {
+          bomId: header.id,
+          lineNumber: line.lineNumber,
+          materialId: line.materialId,
+          quantity: line.quantity,
+          unitOfMeasureId: line.unitOfMeasureId,
+          scrapPercent: line.scrapPercent,
+          notes: line.notes,
+        },
+      }),
+    ),
+  );
+
+  return header;
 }

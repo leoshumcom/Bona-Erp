@@ -55,67 +55,64 @@ export async function createOrder(
 ) {
   const orderNumber = generateOrderNumber();
 
-  const result = await prisma.$transaction(async (tx) => {
-    // 1. 验证店铺和产品存在
-    await tx.store.findUniqueOrThrow({ where: { id: params.storeId } });
+  // D1: sequential (no interactive tx)
+  // 1. 验证店铺和产品存在
+  await prisma.store.findUniqueOrThrow({ where: { id: params.storeId } });
 
-    for (const item of params.items) {
-      await tx.product.findUniqueOrThrow({ where: { id: item.productId } });
-    }
+  for (const item of params.items) {
+    await prisma.product.findUniqueOrThrow({ where: { id: item.productId } });
+  }
 
-    // 2. 计算订单总金额
-    const totalAmount = params.items.reduce(
-      (sum, item) => sum + item.quantity * item.unitPrice,
-      0,
-    );
+  // 2. 计算订单总金额
+  const totalAmount = params.items.reduce(
+    (sum, item) => sum + item.quantity * item.unitPrice,
+    0,
+  );
 
-    // 3. 创建订单
-    const order = await tx.order.create({
-      data: {
-        orderNumber,
-        storeId: params.storeId,
-        platformOrderId: params.platformOrderId,
-        customerName: params.customerName,
-        customerEmail: params.customerEmail,
-        country: params.country || 'CN',
-        currency: params.currency || 'CNY',
-        totalAmount: totalAmount,
-        status: 'PENDING_REVIEW',
-        paymentStatus: 'PAID',
-        orderedAt: new Date(params.orderedAt),
-        internalNote: params.internalNote,
-        warehouseId: params.warehouseId,
-      },
-    });
-
-    // 4. 创建订单明细行
-    const orderItems = [];
-    for (const item of params.items) {
-      const orderItem = await tx.orderItem.create({
-        data: {
-          orderId: order.id,
-          productId: item.productId,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          totalAmount: item.quantity * item.unitPrice,
-        },
-      });
-      orderItems.push(orderItem);
-    }
-
-    // 5. 审计日志
-    await writeAuditLog(tx, {
-      entityType: 'Order',
-      entityId: order.id,
-      action: 'CREATE',
-      actorId: userId,
-      afterState: { orderNumber, storeId: params.storeId, totalAmount, itemCount: params.items.length },
-    });
-
-    return { order, items: orderItems };
+  // 3. 创建订单
+  const order = await prisma.order.create({
+    data: {
+      orderNumber,
+      storeId: params.storeId,
+      platformOrderId: params.platformOrderId,
+      customerName: params.customerName,
+      customerEmail: params.customerEmail,
+      country: params.country || 'CN',
+      currency: params.currency || 'CNY',
+      totalAmount: totalAmount,
+      status: 'PENDING_REVIEW',
+      paymentStatus: 'PAID',
+      orderedAt: new Date(params.orderedAt),
+      internalNote: params.internalNote,
+      warehouseId: params.warehouseId,
+    },
   });
 
-  return result;
+  // 4. 创建订单明细行
+  const orderItems = [];
+  for (const item of params.items) {
+    const orderItem = await prisma.orderItem.create({
+      data: {
+        orderId: order.id,
+        productId: item.productId,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        totalAmount: item.quantity * item.unitPrice,
+      },
+    });
+    orderItems.push(orderItem);
+  }
+
+  // 5. 审计日志
+  await writeAuditLog(prisma, {
+    entityType: 'Order',
+    entityId: order.id,
+    action: 'CREATE',
+    actorId: userId,
+    afterState: JSON.stringify({ orderNumber, storeId: params.storeId, totalAmount, itemCount: params.items.length }),
+  });
+
+  return { order, items: orderItems };
 }
 
 // ============================================================
@@ -258,31 +255,28 @@ export async function addOrderFee(
     notes?: string;
   },
 ) {
-  const result = await prisma.$transaction(async (tx) => {
-    // 验证订单存在
-    await tx.order.findUniqueOrThrow({ where: { id: params.orderId } });
+  // D1: sequential (no interactive tx)
+  // 验证订单存在
+  await prisma.order.findUniqueOrThrow({ where: { id: params.orderId } });
 
-    const fee = await tx.orderFee.create({
-      data: {
-        orderId: params.orderId,
-        feeType: params.feeType,
-        amount: params.amount,
-        notes: params.notes,
-      },
-    });
-
-    await writeAuditLog(tx, {
-      entityType: 'OrderFee',
-      entityId: fee.id,
-      action: 'CREATE',
-      actorId: userId,
-      afterState: { orderId: params.orderId, feeType: params.feeType, amount: params.amount },
-    });
-
-    return fee;
+  const fee = await prisma.orderFee.create({
+    data: {
+      orderId: params.orderId,
+      feeType: params.feeType,
+      amount: params.amount,
+      notes: params.notes,
+    },
   });
 
-  return result;
+  await writeAuditLog(prisma, {
+    entityType: 'OrderFee',
+    entityId: fee.id,
+    action: 'CREATE',
+    actorId: userId,
+    afterState: JSON.stringify({ orderId: params.orderId, feeType: params.feeType, amount: params.amount }),
+  });
+
+  return fee;
 }
 
 export async function deleteOrderFee(feeId: string) {
