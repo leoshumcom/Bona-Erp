@@ -3,9 +3,11 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
-import { prisma } from './common/prisma';
+import { initLocalPrisma } from './common/prisma';
 
 dotenv.config();
+
+initLocalPrisma();
 
 const app = express();
 

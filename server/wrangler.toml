@@ -1,4 +1,4 @@
-name = "bona-erp-api"
+name = "bona-erp"
 main = "src/worker.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
@@ -13,8 +13,8 @@ JWT_SECRET = "bona-erp-prod-jwt-secret-2026"
 [[d1_databases]]
 binding = "DB"
 database_name = "bona-erp-db"
-database_id = ""
+database_id = "5ddf1e0a-e09d-4692-b1d1-5b1ed95cca7c"
 
 # 环境特定配置
 [env.production]
-name = "bona-erp-api-production"
+name = "bona-erp-production"
