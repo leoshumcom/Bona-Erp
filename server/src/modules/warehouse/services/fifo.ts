@@ -1,5 +1,3 @@
-import { Decimal } from '@prisma/client/runtime/library';
-
 // ============================================================
 // FIFO 批次分配 - 纯函数，无外部依赖
 // ============================================================
@@ -7,16 +5,16 @@ import { Decimal } from '@prisma/client/runtime/library';
 /** 批次数据结构 */
 export interface LotLike {
   id: string;
-  quantityRemaining: Decimal;
-  unitCost: Decimal;
+  quantityRemaining: number;
+  unitCost: number;
   receivedAt: Date;
 }
 
 /** 分配结果 */
 export interface FIFOAllocation {
   lotId: string;
-  consumeQuantity: Decimal;
-  unitCost: Decimal;
+  consumeQuantity: number;
+  unitCost: number;
 }
 
 /**
@@ -34,25 +32,25 @@ export interface FIFOAllocation {
  */
 export function computeFIFOAllocation(
   lots: LotLike[],
-  neededQty: Decimal,
+  neededQty: number,
 ): FIFOAllocation[] {
   const selected: FIFOAllocation[] = [];
   let remaining = neededQty;
 
   for (const lot of lots) {
-    if (remaining.lte(0)) break;
-    if (lot.quantityRemaining.lte(0)) continue;
+    if (remaining <= 0) break;
+    if (lot.quantityRemaining <= 0) continue;
 
-    const consume = Decimal.min(lot.quantityRemaining, remaining);
+    const consume = Math.min(lot.quantityRemaining, remaining);
     selected.push({
       lotId: lot.id,
       consumeQuantity: consume,
       unitCost: lot.unitCost,
     });
-    remaining = Decimal.sub(remaining, consume);
+    remaining = remaining - consume;
   }
 
-  if (remaining.gt(0)) {
+  if (remaining > 0) {
     throw new FIFOInsufficientError(
       remaining.toString(),
       neededQty.toString(),
@@ -65,10 +63,10 @@ export function computeFIFOAllocation(
 /**
  * 计算 FIFO 加权平均出库成本
  */
-export function computeFIFOTotalCost(allocation: FIFOAllocation[]): Decimal {
+export function computeFIFOTotalCost(allocation: FIFOAllocation[]): number {
   return allocation.reduce(
-    (sum, a) => Decimal.add(sum, Decimal.mul(a.consumeQuantity, a.unitCost)),
-    new Decimal(0),
+    (sum, a) => sum + a.consumeQuantity * a.unitCost,
+    0,
   );
 }
 
@@ -93,6 +91,6 @@ export function isLotArray(value: unknown): value is LotLike[] {
     Array.isArray(value) &&
     value.length > 0 &&
     typeof (value[0] as any)?.id === 'string' &&
-    (value[0] as any)?.quantityRemaining instanceof Decimal
+    typeof (value[0] as any)?.quantityRemaining === 'number'
   );
 }

@@ -1,41 +1,59 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { jwt } from 'hono/jwt';
+import { initD1Prisma } from './common/prisma';
 
+// Cloudflare Workers entry
 const app = new Hono();
 
 app.use('*', cors());
 
-// 健康检查（无需认证）
+// 健康检查
 app.get('/api/health', (c) => {
   return c.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// ============================================================
+// 路由挂载（所有模块使用统一的 prisma 实例）
+// ============================================================
 
 // 认证路由
 import { authRoutes } from './modules/auth/workerRoutes';
 app.route('/api/auth', authRoutes);
 
+// 工厂路由
+import factoryRoutes from './modules/factory/workerRoutes';
+app.route('/api/factory', factoryRoutes);
+
 // 仓库路由
-import { warehouseRoutes } from './modules/warehouse/workerRoutes';
+import warehouseRoutes from './modules/warehouse/workerRoutes';
 app.route('/api/warehouse', warehouseRoutes);
 
-// 其他模块路由（从模块化 worker routes 导入，或直接代理）
-// 目前服务层已完整实现，但 Worker 路由适配需要逐步迁移
-// 本地开发请使用 npm run dev (Express)
-app.get('/api/*', (c) => {
-  const path = c.req.path;
-  const modules = ['auth', 'warehouse', 'factory', 'operation', 'aftersales', 'boss', 'admin'];
-  const matched = modules.some((m) => path.startsWith(`/api/${m}`));
-  
-  if (matched) {
-    return c.json({ 
-      message: 'Worker 路由正在迁移中，本地开发请使用 npm run dev (Express)',
-      path,
-      note: '服务层函数已全部可用，Worker 路由适配器逐步上线'
-    }, 503);
-  }
-  
+// 运营路由
+import operationRoutes from './modules/operation/workerRoutes';
+app.route('/api/operation', operationRoutes);
+
+// 售后路由
+import aftersalesRoutes from './modules/aftersales/workerRoutes';
+app.route('/api/aftersales', aftersalesRoutes);
+
+// 老板看板路由
+import bossRoutes from './modules/boss/workerRoutes';
+app.route('/api/boss', bossRoutes);
+
+// 管理路由
+import adminRoutes from './modules/admin/workerRoutes';
+app.route('/api/admin', adminRoutes);
+
+// 404
+app.all('/api/*', (c) => {
   return c.json({ error: 'Not Found' }, 404);
 });
 
-export default app;
+export default {
+  async fetch(request: Request, env: any, ctx: any) {
+    if (env.DB) {
+      await initD1Prisma(env.DB);
+    }
+    return app.fetch(request, env, ctx);
+  },
+};

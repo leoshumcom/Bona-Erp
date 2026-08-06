@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../../common/prisma';
-import { computeFIFOAllocation, computeFIFOTotalCost, FIFOInsufficientError, type LotLike, type FIFOAllocation } from './fifo';
+import { computeFIFOAllocation, FIFOInsufficientError, type LotLike, type FIFOAllocation } from './fifo';
 
 // ============================================================
 // 工具函数
@@ -21,8 +21,8 @@ async function upsertBalance(
   params: {
     productId: string;
     storageLocationId: string;
-    quantityDelta: Prisma.Decimal;
-    costDelta: Prisma.Decimal;
+    quantityDelta: number;
+    costDelta: number;
     unitOfMeasureId: string;
   },
 ) {
@@ -36,8 +36,8 @@ async function upsertBalance(
     return tx.inventoryBalance.update({
       where: { id: existing.id },
       data: {
-        quantityOnHand: Prisma.Decimal.add(existing.quantityOnHand, quantityDelta),
-        totalCost: Prisma.Decimal.add(existing.totalCost, costDelta),
+        quantityOnHand: existing.quantityOnHand + quantityDelta,
+        totalCost: existing.totalCost + costDelta,
         lastMovementAt: new Date(),
       },
     });
@@ -78,9 +78,9 @@ function createLedger(
       movementType: params.movementType as any,
       productId: params.productId,
       storageLocationId: params.storageLocationId,
-      quantity: new Prisma.Decimal(params.quantity),
+      quantity: params.quantity,
       unitOfMeasureId: params.unitOfMeasureId,
-      unitCost: params.unitCost != null ? new Prisma.Decimal(params.unitCost) : null,
+      unitCost: params.unitCost != null ? params.unitCost : null,
       referenceType: params.referenceType,
       referenceId: params.referenceId,
       postedById: params.postedById,
@@ -122,7 +122,7 @@ async function selectFIFOLots(
   tx: Prisma.TransactionClient,
   productId: string,
   storageLocationId: string,
-  neededQuantity: Prisma.Decimal,
+  neededQuantity: number,
 ) {
   const lots = await tx.materialLot.findMany({
     where: {
@@ -143,13 +143,13 @@ async function checkBalance(
   tx: Prisma.TransactionClient,
   productId: string,
   storageLocationId: string,
-  neededQty: Prisma.Decimal,
+  neededQty: number,
 ) {
   const balance = await tx.inventoryBalance.findUnique({
     where: { productId_storageLocationId: { productId, storageLocationId } },
   });
 
-  if (!balance || balance.quantityOnHand.lt(neededQty)) {
+  if (!balance || balance.quantityOnHand < neededQty) {
     const onHand = balance?.quantityOnHand.toString() ?? '0';
     throw new InsufficientStockError(
       productId,
@@ -193,7 +193,7 @@ async function batchDeductLots(
     (await tx.materialLot.findMany({ where: { id: { in: lotIds } } })).map((l) => [l.id, l]),
   );
 
-  let totalCostConsumed = new Prisma.Decimal(0);
+  let totalCostConsumed = 0;
   const consumptions: Array<{ lotId: string; consumeQuantity: string; unitCost: string }> = [];
 
   for (const alloc of allocation) {
@@ -201,7 +201,7 @@ async function batchDeductLots(
     if (!lot) throw new Error(`批次 ${alloc.lotId} 不存在`);
 
     // 更新批次剩余数量
-    const newRemaining = Prisma.Decimal.sub(lot.quantityRemaining, alloc.consumeQuantity);
+    const newRemaining = lot.quantityRemaining - alloc.consumeQuantity;
     await tx.materialLot.update({
       where: { id: alloc.lotId },
       data: { quantityRemaining: newRemaining },
@@ -225,10 +225,7 @@ async function batchDeductLots(
       consumeQuantity: alloc.consumeQuantity.toString(),
       unitCost: alloc.unitCost.toString(),
     });
-    totalCostConsumed = Prisma.Decimal.add(
-      totalCostConsumed,
-      Prisma.Decimal.mul(alloc.consumeQuantity, alloc.unitCost),
-    );
+    totalCostConsumed = totalCostConsumed + alloc.consumeQuantity * alloc.unitCost;
   }
 
   return { consumptions, totalCostConsumed };
@@ -252,7 +249,7 @@ async function executeOutbound(
     notes?: string;
   },
 ) {
-  const qty = new Prisma.Decimal(params.quantity);
+  const qty = params.quantity;
 
   // 1. 余额预检
   await checkBalance(tx, params.productId, params.storageLocationId, qty);
@@ -291,8 +288,8 @@ async function executeOutbound(
   const balance = await upsertBalance(tx, {
     productId: params.productId,
     storageLocationId: params.storageLocationId,
-    quantityDelta: qty.negated(),
-    costDelta: totalCostConsumed.negated(),
+    quantityDelta: -qty,
+    costDelta: -totalCostConsumed,
     unitOfMeasureId: params.unitOfMeasureId,
   });
 
@@ -352,7 +349,7 @@ export async function inboundProduction(
         lotNumber,
         productId: params.productId,
         productionOrderId: params.productionOrderId,
-        quantity: new Prisma.Decimal(params.quantity),
+        quantity: params.quantity,
         unitOfMeasureId: params.unitOfMeasureId,
         storageLocationId: params.storageLocationId,
       },
@@ -373,11 +370,11 @@ export async function inboundProduction(
     });
 
     // 4. 更新库存余额
-    const costTotal = new Prisma.Decimal(params.quantity).mul(params.unitCost);
+    const costTotal = params.quantity * params.unitCost;
     const balance = await upsertBalance(tx, {
       productId: params.productId,
       storageLocationId: params.storageLocationId,
-      quantityDelta: new Prisma.Decimal(params.quantity),
+      quantityDelta: params.quantity,
       costDelta: costTotal,
       unitOfMeasureId: params.unitOfMeasureId,
     });
@@ -386,7 +383,7 @@ export async function inboundProduction(
     await tx.productionOrder.update({
       where: { id: params.productionOrderId },
       data: {
-        completedQuantity: Prisma.Decimal.add(po.completedQuantity, params.quantity),
+        completedQuantity: po.completedQuantity + params.quantity,
       },
     });
 
@@ -417,10 +414,10 @@ export async function inboundPurchase(
       data: {
         lotNumber,
         productId: params.productId,
-        quantityReceived: new Prisma.Decimal(params.quantity),
-        quantityRemaining: new Prisma.Decimal(params.quantity),
+        quantityReceived: params.quantity,
+        quantityRemaining: params.quantity,
         unitOfMeasureId: params.unitOfMeasureId,
-        unitCost: new Prisma.Decimal(params.unitCost),
+        unitCost: params.unitCost,
         storageLocationId: params.storageLocationId,
         sourceType: params.purchaseOrderId ? 'PurchaseOrder' : 'InitialStock',
         sourceRefId: params.purchaseOrderId || '',
@@ -445,11 +442,11 @@ export async function inboundPurchase(
     });
 
     // 3. 更新库存余额
-    const costTotal = new Prisma.Decimal(params.quantity).mul(params.unitCost);
+    const costTotal = params.quantity * params.unitCost;
     const balance = await upsertBalance(tx, {
       productId: params.productId,
       storageLocationId: params.storageLocationId,
-      quantityDelta: new Prisma.Decimal(params.quantity),
+      quantityDelta: params.quantity,
       costDelta: costTotal,
       unitOfMeasureId: params.unitOfMeasureId,
     });
@@ -479,10 +476,10 @@ export async function inboundReturn(
       data: {
         lotNumber,
         productId: params.productId,
-        quantityReceived: new Prisma.Decimal(params.quantity),
-        quantityRemaining: new Prisma.Decimal(params.quantity),
+        quantityReceived: params.quantity,
+        quantityRemaining: params.quantity,
         unitOfMeasureId: params.unitOfMeasureId,
-        unitCost: new Prisma.Decimal(params.unitCost),
+        unitCost: params.unitCost,
         storageLocationId: params.storageLocationId,
         sourceType: 'AfterSales',
         sourceRefId: params.afterSalesId,
@@ -503,11 +500,11 @@ export async function inboundReturn(
       notes: params.notes,
     });
 
-    const costTotal = new Prisma.Decimal(params.quantity).mul(params.unitCost);
+    const costTotal = params.quantity * params.unitCost;
     const balance = await upsertBalance(tx, {
       productId: params.productId,
       storageLocationId: params.storageLocationId,
-      quantityDelta: new Prisma.Decimal(params.quantity),
+      quantityDelta: params.quantity,
       costDelta: costTotal,
       unitOfMeasureId: params.unitOfMeasureId,
     });
@@ -537,10 +534,10 @@ export async function inboundInitial(
       data: {
         lotNumber,
         productId: params.productId,
-        quantityReceived: new Prisma.Decimal(params.quantity),
-        quantityRemaining: new Prisma.Decimal(params.quantity),
+        quantityReceived: params.quantity,
+        quantityRemaining: params.quantity,
         unitOfMeasureId: params.unitOfMeasureId,
-        unitCost: new Prisma.Decimal(params.unitCost),
+        unitCost: params.unitCost,
         storageLocationId: params.storageLocationId,
         sourceType: 'InitialStock',
         sourceRefId: `INIT-${Date.now()}`,
@@ -562,11 +559,11 @@ export async function inboundInitial(
       notes: params.notes || '期初库存导入',
     });
 
-    const costTotal = new Prisma.Decimal(params.quantity).mul(params.unitCost);
+    const costTotal = params.quantity * params.unitCost;
     const balance = await upsertBalance(tx, {
       productId: params.productId,
       storageLocationId: params.storageLocationId,
-      quantityDelta: new Prisma.Decimal(params.quantity),
+      quantityDelta: params.quantity,
       costDelta: costTotal,
       unitOfMeasureId: params.unitOfMeasureId,
     });
@@ -632,10 +629,7 @@ export async function outboundIssue(
     await tx.productionOrderComponent.update({
       where: { id: params.productionOrderComponentId },
       data: {
-        issuedQuantity: Prisma.Decimal.add(
-          component.issuedQuantity,
-          params.quantity,
-        ),
+        issuedQuantity: component.issuedQuantity + params.quantity,
       },
     });
 
@@ -658,7 +652,7 @@ export async function outboundIssue(
       ...outbound,
       action: 'MATERIAL_ISSUE',
       componentId: params.productionOrderComponentId,
-      issuedQuantity: Prisma.Decimal.add(component.issuedQuantity, params.quantity).toString(),
+      issuedQuantity: (component.issuedQuantity + params.quantity).toString(),
     };
   });
 }
@@ -772,8 +766,8 @@ export async function outboundReturnStock(
       select: { unitCost: true },
     });
 
-    const unitCost = recentIssue?.unitCost ?? new Prisma.Decimal(0);
-    const costTotal = Prisma.Decimal.mul(unitCost, params.quantity);
+    const unitCost = recentIssue?.unitCost ?? 0;
+    const costTotal = unitCost * params.quantity;
 
     // 记录返库前余额
     const beforeBalance = await tx.inventoryBalance.findUnique({
@@ -791,8 +785,8 @@ export async function outboundReturnStock(
       data: {
         lotNumber,
         productId: params.productId,
-        quantityReceived: new Prisma.Decimal(params.quantity),
-        quantityRemaining: new Prisma.Decimal(params.quantity),
+        quantityReceived: params.quantity,
+        quantityRemaining: params.quantity,
         unitOfMeasureId: params.unitOfMeasureId,
         unitCost,
         storageLocationId: params.storageLocationId,
@@ -821,7 +815,7 @@ export async function outboundReturnStock(
     const balance = await upsertBalance(tx, {
       productId: params.productId,
       storageLocationId: params.storageLocationId,
-      quantityDelta: new Prisma.Decimal(params.quantity),
+      quantityDelta: params.quantity,
       costDelta: costTotal,
       unitOfMeasureId: params.unitOfMeasureId,
     });
@@ -923,8 +917,8 @@ export async function executeCountAdjust(
       const balance = await upsertBalance(tx, {
         productId: adj.productId,
         storageLocationId: adj.storageLocationId,
-        quantityDelta: new Prisma.Decimal(adj.difference),
-        costDelta: new Prisma.Decimal(0), // 盘点调整不改成本
+        quantityDelta: adj.difference,
+        costDelta: 0, // 盘点调整不改成本
         unitOfMeasureId: adj.unitOfMeasureId,
       });
 

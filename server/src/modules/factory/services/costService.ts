@@ -23,13 +23,13 @@ export async function getProductionCostSummary(productionOrderId: string) {
   });
 
   const totalCost = costItems.reduce(
-    (sum, item) => Prisma.Decimal.add(sum, item._sum.amount ?? new Prisma.Decimal(0)),
-    new Prisma.Decimal(0),
+    (sum, item) => sum + (item._sum.amount ?? 0),
+    0,
   );
 
   const breakdown = costItems.map((item) => ({
     costType: item.costType,
-    amount: (item._sum.amount ?? new Prisma.Decimal(0)).toString(),
+    amount: (item._sum.amount ?? 0).toString(),
   }));
 
   return {
@@ -39,8 +39,8 @@ export async function getProductionCostSummary(productionOrderId: string) {
     plannedQuantity: order.quantity.toString(),
     completedQuantity: order.completedQuantity.toString(),
     totalCost: totalCost.toString(),
-    unitCost: order.completedQuantity.gt(0)
-      ? Prisma.Decimal.div(totalCost, order.completedQuantity).toString()
+    unitCost: order.completedQuantity > 0
+      ? (totalCost / order.completedQuantity).toString()
       : '0',
     breakdown,
   };
@@ -91,33 +91,33 @@ export async function getProductCostBreakdown(
   });
 
   // 汇总每个工单的总成本
-  const orderCostMap = new Map<string, Prisma.Decimal>();
-  const typeAggregate: Record<string, Prisma.Decimal> = {};
+  const orderCostMap = new Map<string, number>();
+  const typeAggregate: Record<string, number> = {};
 
   for (const c of costs) {
-    const amount = c._sum.amount ?? new Prisma.Decimal(0);
-    const existing = orderCostMap.get(c.productionOrderId) ?? new Prisma.Decimal(0);
-    orderCostMap.set(c.productionOrderId, Prisma.Decimal.add(existing, amount));
+    const amount = c._sum.amount ?? 0;
+    const existing = orderCostMap.get(c.productionOrderId) ?? 0;
+    orderCostMap.set(c.productionOrderId, existing + amount);
 
-    const typeExisting = typeAggregate[c.costType] ?? new Prisma.Decimal(0);
-    typeAggregate[c.costType] = Prisma.Decimal.add(typeExisting, amount);
+    const typeExisting = typeAggregate[c.costType] ?? 0;
+    typeAggregate[c.costType] = typeExisting + amount;
   }
 
-  let totalCost = new Prisma.Decimal(0);
-  let totalQuantity = new Prisma.Decimal(0);
+  let totalCost = 0;
+  let totalQuantity = 0;
 
   const orders = completedOrders.map((order) => {
-    const orderCost = orderCostMap.get(order.id) ?? new Prisma.Decimal(0);
-    totalCost = Prisma.Decimal.add(totalCost, orderCost);
-    totalQuantity = Prisma.Decimal.add(totalQuantity, order.completedQuantity);
+    const orderCost = orderCostMap.get(order.id) ?? 0;
+    totalCost = totalCost + orderCost;
+    totalQuantity = totalQuantity + order.completedQuantity;
 
     return {
       orderId: order.id,
       orderNumber: order.orderNumber,
       completedQuantity: order.completedQuantity.toString(),
       totalCost: orderCost.toString(),
-      unitCost: order.completedQuantity.gt(0)
-        ? Prisma.Decimal.div(orderCost, order.completedQuantity).toString()
+      unitCost: order.completedQuantity > 0
+        ? (orderCost / order.completedQuantity).toString()
         : '0',
     };
   });
@@ -127,8 +127,8 @@ export async function getProductCostBreakdown(
     totalOrders: completedOrders.length,
     totalQuantity: totalQuantity.toString(),
     totalCost: totalCost.toString(),
-    averageUnitCost: totalQuantity.gt(0)
-      ? Prisma.Decimal.div(totalCost, totalQuantity).toString()
+    averageUnitCost: totalQuantity > 0
+      ? (totalCost / totalQuantity).toString()
       : '0',
     costByType: Object.entries(typeAggregate).map(([type, amount]) => ({
       costType: type,
@@ -172,12 +172,12 @@ export async function getMoldCostAllocation(productId: string) {
     }),
   ]);
 
-  let totalMoldCost = new Prisma.Decimal(0);
+  let totalMoldCost = 0;
   const moldDetails = molds.map((m) => {
-    totalMoldCost = Prisma.Decimal.add(totalMoldCost, m.moldCost);
+    totalMoldCost = totalMoldCost + m.moldCost;
     const depreciationPerUnit = m.lifespan > 0
-      ? Prisma.Decimal.div(m.moldCost, m.lifespan)
-      : new Prisma.Decimal(0);
+      ? m.moldCost / m.lifespan
+      : 0;
     return {
       moldId: m.id,
       moldCode: m.moldCode,
@@ -188,12 +188,9 @@ export async function getMoldCostAllocation(productId: string) {
     };
   });
 
-  const totalExpenses = expensesAgg._sum.amount ?? new Prisma.Decimal(0);
-  const totalDepreciation = depreciationAgg._sum.amount ?? new Prisma.Decimal(0);
-  const totalAllocation = Prisma.Decimal.add(
-    Prisma.Decimal.add(totalMoldCost, totalExpenses),
-    totalDepreciation,
-  );
+  const totalExpenses = expensesAgg._sum.amount ?? 0;
+  const totalDepreciation = depreciationAgg._sum.amount ?? 0;
+  const totalAllocation = totalMoldCost + totalExpenses + totalDepreciation;
 
   return {
     productId,
@@ -216,14 +213,14 @@ export async function getFactoryOverhead(period: string) {
   });
 
   const totalAmount = expenses.reduce(
-    (sum, e) => Prisma.Decimal.add(sum, e.amount),
-    new Prisma.Decimal(0),
+    (sum, e) => sum + e.amount,
+    0,
   );
 
-  const byType: Record<string, Prisma.Decimal> = {};
+  const byType: Record<string, number> = {};
   for (const e of expenses) {
-    const existing = byType[e.expenseType] ?? new Prisma.Decimal(0);
-    byType[e.expenseType] = Prisma.Decimal.add(existing, e.amount);
+    const existing = byType[e.expenseType] ?? 0;
+    byType[e.expenseType] = existing + e.amount;
   }
 
   return {
@@ -253,7 +250,7 @@ export async function recordFactoryExpense(
   return prisma.factoryFixedExpense.create({
     data: {
       expenseType: params.expenseType,
-      amount: new Prisma.Decimal(params.amount),
+      amount: params.amount,
       expenseMonth: params.expenseMonth,
       notes: params.notes,
     },

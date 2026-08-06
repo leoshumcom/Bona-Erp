@@ -127,3 +127,29 @@ export const balanceQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().positive().max(100).default(20),
 });
+
+// ========== 仓库费用 ==========
+
+export const warehouseExpenseCreateSchema = z.object({
+  warehouseId: z.string().uuid('仓库ID格式无效').optional(),
+  expenseType: z.string().min(1, '费用类型不能为空'),
+  amount: z.number().positive('金额必须大于0'),
+  expenseMonth: z.string().regex(/^\d{4}-\d{2}$/, '费用月份格式必须为YYYY-MM'),
+  notes: z.string().optional(),
+});
+
+export const warehouseExpenseUpdateSchema = z.object({
+  warehouseId: z.string().uuid('仓库ID格式无效').optional(),
+  expenseType: z.string().min(1, '费用类型不能为空').optional(),
+  amount: z.number().positive('金额必须大于0').optional(),
+  expenseMonth: z.string().regex(/^\d{4}-\d{2}$/, '费用月份格式必须为YYYY-MM').optional(),
+  notes: z.string().optional(),
+});
+
+export const warehouseExpenseQuerySchema = z.object({
+  expenseMonth: z.string().optional(),
+  expenseType: z.string().optional(),
+  warehouseId: z.string().uuid().optional(),
+  page: z.coerce.number().int().positive().default(1),
+  pageSize: z.coerce.number().int().positive().max(100).default(20),
+});

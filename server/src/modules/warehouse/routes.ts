@@ -4,6 +4,7 @@ import { success, error, paginated } from '../../common/response';
 import * as s from './schemas';
 import * as inventoryService from './services/inventoryService';
 import { InsufficientStockError } from './services/inventoryService';
+import * as expenseService from './services/expenseService';
 
 const router = Router();
 
@@ -189,6 +190,69 @@ router.get('/summary', requireRole('ADMIN', 'BOSS', 'WAREHOUSE_MANAGER', 'VIEWER
     const result = await inventoryService.getWarehouseSummary(warehouseId);
     res.json(success(result, '查询成功'));
   } catch (err: any) { handleError(res, err, '查询仓库汇总失败'); }
+});
+
+// ========== 仓库费用管理 ==========
+
+/** POST /api/warehouse/expenses - 创建仓库费用 */
+router.post('/expenses', requireRole('ADMIN', 'WAREHOUSE_MANAGER'), async (req: AuthRequest, res: Response) => {
+  try {
+    const parsed = s.warehouseExpenseCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(error(getValidationErrors(parsed), 400));
+    }
+    const result = await expenseService.createWarehouseExpense(req.userId!, parsed.data);
+    res.json(success(result, '仓库费用记录成功'));
+  } catch (err: any) { handleError(res, err, '创建仓库费用失败'); }
+});
+
+/** GET /api/warehouse/expenses - 仓库费用列表 */
+router.get('/expenses', requireRole('ADMIN', 'BOSS', 'WAREHOUSE_MANAGER', 'VIEWER'), async (req: AuthRequest, res: Response) => {
+  try {
+    const parsed = s.warehouseExpenseQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json(error(getValidationErrors(parsed), 400));
+    }
+    const result = await expenseService.getWarehouseExpenses(parsed.data);
+    res.json(paginated(result.data, result.total, result.page, result.pageSize));
+  } catch (err: any) { handleError(res, err, '查询仓库费用列表失败'); }
+});
+
+/** GET /api/warehouse/expenses/summary - 仓库费用汇总 */
+router.get('/expenses/summary', requireRole('ADMIN', 'BOSS', 'WAREHOUSE_MANAGER'), async (req: AuthRequest, res: Response) => {
+  try {
+    const expenseMonth = req.query.expenseMonth as string | undefined;
+    const result = await expenseService.getWarehouseExpenseSummary(expenseMonth);
+    res.json(success(result, '查询成功'));
+  } catch (err: any) { handleError(res, err, '查询仓库费用汇总失败'); }
+});
+
+/** GET /api/warehouse/expenses/:id - 仓库费用详情 */
+router.get('/expenses/:id', requireRole('ADMIN', 'BOSS', 'WAREHOUSE_MANAGER', 'VIEWER'), async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await expenseService.getWarehouseExpenseDetail(req.params.id as string);
+    res.json(success(result, '查询成功'));
+  } catch (err: any) { handleError(res, err, '查询仓库费用详情失败'); }
+});
+
+/** PUT /api/warehouse/expenses/:id - 更新仓库费用 */
+router.put('/expenses/:id', requireRole('ADMIN', 'WAREHOUSE_MANAGER'), async (req: AuthRequest, res: Response) => {
+  try {
+    const parsed = s.warehouseExpenseUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(error(getValidationErrors(parsed), 400));
+    }
+    const result = await expenseService.updateWarehouseExpense(req.params.id as string, parsed.data);
+    res.json(success(result, '仓库费用更新成功'));
+  } catch (err: any) { handleError(res, err, '更新仓库费用失败'); }
+});
+
+/** DELETE /api/warehouse/expenses/:id - 删除仓库费用 */
+router.delete('/expenses/:id', requireRole('ADMIN', 'WAREHOUSE_MANAGER'), async (req: AuthRequest, res: Response) => {
+  try {
+    await expenseService.deleteWarehouseExpense(req.params.id as string);
+    res.json(success(null, '仓库费用已删除'));
+  } catch (err: any) { handleError(res, err, '删除仓库费用失败'); }
 });
 
 export default router;

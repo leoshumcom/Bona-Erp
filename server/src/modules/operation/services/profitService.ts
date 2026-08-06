@@ -22,16 +22,16 @@ export async function calculateOrderProfit(orderId: string, userId: string) {
 
     // 1. 生产成本：按订单中每个产品行分别核算
     //    = SUM(ProductionOrder.ProductionCost where productionOrder.productId = 该产品) / completedQuantity * orderItem.quantity
-    let totalProductCost = new Prisma.Decimal(0);
+    let totalProductCost = 0;
 
     for (const item of order.items) {
       const productCost = await getProductCostPerUnit(tx, item.productId);
-      const itemCost = productCost.mul(item.quantity);
-      totalProductCost = Prisma.Decimal.add(totalProductCost, itemCost);
+      const itemCost = productCost * item.quantity;
+      totalProductCost = totalProductCost + itemCost;
     }
 
     // 2. 仓储分摊成本：当月仓储费用 / 当月总库存量 * 订单产品数量
-    let warehouseCost = new Prisma.Decimal(0);
+    let warehouseCost = 0;
     try {
       warehouseCost = await getWarehouseCostAllocation(tx, order);
     } catch (err: any) {
@@ -39,7 +39,7 @@ export async function calculateOrderProfit(orderId: string, userId: string) {
     }
 
     // 3. 广告费分摊：订单所属店铺的广告花费 / 该店铺同期订单数
-    let adCost = new Prisma.Decimal(0);
+    let adCost = 0;
     try {
       adCost = await getAdCostAllocation(tx, order);
     } catch (err: any) {
@@ -49,15 +49,15 @@ export async function calculateOrderProfit(orderId: string, userId: string) {
     // 4. 平台费用：从 OrderFee 中汇总 platform_commission
     const platformFee = order.fees
       .filter((f) => f.feeType === 'platform_commission')
-      .reduce((sum, f) => Prisma.Decimal.add(sum, f.amount), new Prisma.Decimal(0));
+      .reduce((sum, f) => sum + f.amount, 0);
 
     // 5. 物流费用：从 Logistics 或 OrderFee 中汇总
     const logisticsFee = order.fees
       .filter((f) => f.feeType === 'logistics')
-      .reduce((sum, f) => Prisma.Decimal.add(sum, f.amount), new Prisma.Decimal(0));
+      .reduce((sum, f) => sum + f.amount, 0);
 
     const logisticsTotalFee = order.logistics
-      ? Prisma.Decimal.add(order.logistics.totalFee, logisticsFee)
+      ? order.logistics.totalFee + logisticsFee
       : logisticsFee;
 
     // 6. 售后费用：合计该订单所有售后记录
@@ -65,32 +65,23 @@ export async function calculateOrderProfit(orderId: string, userId: string) {
       where: { orderId },
     });
 
-    let aftersalesFee = new Prisma.Decimal(0);
+    let aftersalesFee = 0;
     for (const as of afterSalesRecords) {
-      if (as.refundAmount) aftersalesFee = Prisma.Decimal.add(aftersalesFee, as.refundAmount);
-      if (as.logisticsFee) aftersalesFee = Prisma.Decimal.add(aftersalesFee, as.logisticsFee);
-      if (as.compensation) aftersalesFee = Prisma.Decimal.add(aftersalesFee, as.compensation);
-      if (as.lossAmount) aftersalesFee = Prisma.Decimal.add(aftersalesFee, as.lossAmount);
+      if (as.refundAmount) aftersalesFee = aftersalesFee + as.refundAmount;
+      if (as.logisticsFee) aftersalesFee = aftersalesFee + as.logisticsFee;
+      if (as.compensation) aftersalesFee = aftersalesFee + as.compensation;
+      if (as.lossAmount) aftersalesFee = aftersalesFee + as.lossAmount;
     }
 
     // 7. 计算总成本和利润
-    const totalCost = Prisma.Decimal.add(
-      Prisma.Decimal.add(
-        Prisma.Decimal.add(
-          Prisma.Decimal.add(totalProductCost, warehouseCost),
-          adCost,
-        ),
-        platformFee,
-      ),
-      Prisma.Decimal.add(logisticsTotalFee, aftersalesFee),
-    );
+    const totalCost = totalProductCost + warehouseCost + adCost + platformFee + logisticsTotalFee + aftersalesFee;
 
-    const netProfit = Prisma.Decimal.sub(revenue, totalCost);
+    const netProfit = revenue - totalCost;
 
     // 利润率（净利率）
-    const profitMargin = revenue.gt(0)
-      ? Prisma.Decimal.div(netProfit, revenue)
-      : new Prisma.Decimal(0);
+    const profitMargin = revenue > 0
+      ? netProfit / revenue
+      : 0;
 
     // 8. 创建或更新 OrderProfit 记录
     const profitData = {
@@ -102,8 +93,8 @@ export async function calculateOrderProfit(orderId: string, userId: string) {
       adFee: adCost,
       logisticsFee: logisticsTotalFee,
       aftersalesFee,
-      taxFee: new Prisma.Decimal(0),
-      grossProfit: Prisma.Decimal.sub(revenue, totalProductCost),
+      taxFee: 0,
+      grossProfit: revenue - totalProductCost,
       netProfit,
       profitMargin,
       calculatedAt: new Date(),
@@ -145,7 +136,7 @@ export async function calculateOrderProfit(orderId: string, userId: string) {
 async function getProductCostPerUnit(
   tx: Prisma.TransactionClient,
   productId: string,
-): Promise<Prisma.Decimal> {
+): Promise<number> {
   // 查找该产品的已完成生产工单，取生产成本
   const productionOrders = await tx.productionOrder.findMany({
     where: {
@@ -161,27 +152,27 @@ async function getProductCostPerUnit(
   if (productionOrders.length === 0) {
     // 回退到产品的标准成本或当前成本
     const product = await tx.product.findUniqueOrThrow({ where: { id: productId } });
-    return product.currentCost ?? product.standardCost ?? new Prisma.Decimal(0);
+    return product.currentCost ?? product.standardCost ?? 0;
   }
 
   // 加权平均计算单位生产成本
-  let totalCost = new Prisma.Decimal(0);
-  let totalQuantity = new Prisma.Decimal(0);
+  let totalCost = 0;
+  let totalQuantity = 0;
 
   for (const po of productionOrders) {
     const poCost = po.costs.reduce(
-      (sum, c) => Prisma.Decimal.add(sum, c.amount),
-      new Prisma.Decimal(0),
+      (sum, c) => sum + c.amount,
+      0,
     );
-    totalCost = Prisma.Decimal.add(totalCost, poCost);
-    totalQuantity = Prisma.Decimal.add(totalQuantity, po.completedQuantity);
+    totalCost = totalCost + poCost;
+    totalQuantity = totalQuantity + po.completedQuantity;
   }
 
-  if (totalQuantity.eq(0)) {
-    return new Prisma.Decimal(0);
+  if (totalQuantity === 0) {
+    return 0;
   }
 
-  return Prisma.Decimal.div(totalCost, totalQuantity);
+  return totalCost / totalQuantity;
 }
 
 // ============================================================
@@ -191,7 +182,7 @@ async function getProductCostPerUnit(
 async function getWarehouseCostAllocation(
   tx: Prisma.TransactionClient,
   order: any,
-): Promise<Prisma.Decimal> {
+): Promise<number> {
   const orderedMonth = order.orderedAt.toISOString().slice(0, 7); // YYYY-MM
 
   // 当月仓储费用
@@ -200,10 +191,10 @@ async function getWarehouseCostAllocation(
     _sum: { amount: true },
   });
 
-  const totalWarehouseCost = warehouseExpenses._sum.amount ?? new Prisma.Decimal(0);
+  const totalWarehouseCost = warehouseExpenses._sum.amount ?? 0;
 
-  if (totalWarehouseCost.eq(0)) {
-    return new Prisma.Decimal(0);
+  if (totalWarehouseCost === 0) {
+    return 0;
   }
 
   // 当月总库存量（所有产品的库存余额合计）
@@ -211,10 +202,10 @@ async function getWarehouseCostAllocation(
     _sum: { quantityOnHand: true },
   });
 
-  const totalInventory = inventorySum._sum.quantityOnHand ?? new Prisma.Decimal(1);
+  const totalInventory = inventorySum._sum.quantityOnHand ?? 1;
 
-  if (totalInventory.eq(0)) {
-    return new Prisma.Decimal(0);
+  if (totalInventory === 0) {
+    return 0;
   }
 
   // 该订单的产品总数量
@@ -224,8 +215,8 @@ async function getWarehouseCostAllocation(
   );
 
   // 按库存比例分摊: (订单数量 / 总库存量) * 总仓储费
-  const rate = Prisma.Decimal.div(orderTotalQty, totalInventory);
-  return Prisma.Decimal.mul(rate, totalWarehouseCost);
+  const rate = orderTotalQty / totalInventory;
+  return rate * totalWarehouseCost;
 }
 
 // ============================================================
@@ -235,7 +226,7 @@ async function getWarehouseCostAllocation(
 async function getAdCostAllocation(
   tx: Prisma.TransactionClient,
   order: any,
-): Promise<Prisma.Decimal> {
+): Promise<number> {
   // 该店铺同期广告总花费
   const adSpend = await tx.adCampaign.aggregate({
     where: {
@@ -245,10 +236,10 @@ async function getAdCostAllocation(
     _sum: { spend: true },
   });
 
-  const totalAdSpend = adSpend._sum.spend ?? new Prisma.Decimal(0);
+  const totalAdSpend = adSpend._sum.spend ?? 0;
 
-  if (totalAdSpend.eq(0)) {
-    return new Prisma.Decimal(0);
+  if (totalAdSpend === 0) {
+    return 0;
   }
 
   // 该店铺同期订单数
@@ -271,11 +262,11 @@ async function getAdCostAllocation(
   });
 
   if (orderCount === 0) {
-    return new Prisma.Decimal(0);
+    return 0;
   }
 
   // 平均分摊到每笔订单
-  return Prisma.Decimal.div(totalAdSpend, orderCount);
+  return totalAdSpend / orderCount;
 }
 
 // ============================================================

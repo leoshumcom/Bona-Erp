@@ -79,7 +79,7 @@ export async function createOrder(
         customerEmail: params.customerEmail,
         country: params.country || 'CN',
         currency: params.currency || 'CNY',
-        totalAmount: new Prisma.Decimal(totalAmount),
+        totalAmount: totalAmount,
         status: 'PENDING_REVIEW',
         paymentStatus: 'PAID',
         orderedAt: new Date(params.orderedAt),
@@ -96,8 +96,8 @@ export async function createOrder(
           orderId: order.id,
           productId: item.productId,
           quantity: item.quantity,
-          unitPrice: new Prisma.Decimal(item.unitPrice),
-          totalAmount: new Prisma.Decimal(item.quantity * item.unitPrice),
+          unitPrice: item.unitPrice,
+          totalAmount: item.quantity * item.unitPrice,
         },
       });
       orderItems.push(orderItem);
@@ -266,7 +266,7 @@ export async function addOrderFee(
       data: {
         orderId: params.orderId,
         feeType: params.feeType,
-        amount: new Prisma.Decimal(params.amount),
+        amount: params.amount,
         notes: params.notes,
       },
     });

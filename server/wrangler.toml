@@ -4,35 +4,17 @@ compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 account_id = "0fbce6165150f90e7f385e373182204e"
 
-# 自定义域名路由（需要先在 Cloudflare 添加 bona-official.com 域名后启用）
-# [[routes]]
-# pattern = "api.bona-official.com/*"
-# zone_id = ""
-
-# 环境变量（生产环境）
+# 环境变量
 [vars]
 NODE_ENV = "production"
-JWT_SECRET = ""  # 在 Cloudflare Dashboard 设置
+JWT_SECRET = "bona-erp-prod-jwt-secret-2026"
 
-# D1 数据库（可选，如使用 D1 替代 PostgreSQL）
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "bona-erp-db"
-# database_id = ""
-
-# KV 命名空间（缓存用）
-# [[kv_namespaces]]
-# binding = "CACHE"
-# id = ""
-
-# R2 存储（文件上传用）
-# [[r2_buckets]]
-# binding = "STORAGE"
-# bucket_name = "bona-erp-files"
+# D1 数据库（SQLite 兼容，Prisma D1 Adapter）
+[[d1_databases]]
+binding = "DB"
+database_name = "bona-erp-db"
+database_id = ""
 
 # 环境特定配置
 [env.production]
-# routes = [{ pattern = "api.bona-official.com/*", zone_id = "" }]
-
-[env.staging]
-name = "bona-erp-api-staging"
+name = "bona-erp-api-production"

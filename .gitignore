@@ -31,6 +31,9 @@ yarn-error.log*
 
 # Prisma
 server/prisma/migrations/
+server/prisma/prisma/
+*.db
+*.db-journal
 
 # PDF / Documents
 *.pdf

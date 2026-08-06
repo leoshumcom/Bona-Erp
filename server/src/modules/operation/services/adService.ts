@@ -30,13 +30,13 @@ export async function createCampaign(
       campaignName: params.campaignName,
       platformCampaignId: params.platformCampaignId,
       campaignType: params.campaignType,
-      spend: new Prisma.Decimal(params.spend ?? 0),
+      spend: params.spend ?? 0,
       startDate: new Date(params.startDate),
       endDate: params.endDate ? new Date(params.endDate) : undefined,
       impressions: params.impressions ?? 0,
       clicks: params.clicks ?? 0,
       orders: params.orders ?? 0,
-      sales: new Prisma.Decimal(params.sales ?? 0),
+      sales: params.sales ?? 0,
     },
     include: {
       store: { select: { id: true, name: true } },
@@ -107,13 +107,13 @@ export async function updateCampaign(
 
   if (params.campaignName !== undefined) data.campaignName = params.campaignName;
   if (params.campaignType !== undefined) data.campaignType = params.campaignType;
-  if (params.spend !== undefined) data.spend = new Prisma.Decimal(params.spend);
+  if (params.spend !== undefined) data.spend = params.spend;
   if (params.startDate !== undefined) data.startDate = new Date(params.startDate);
   if (params.endDate !== undefined) data.endDate = new Date(params.endDate);
   if (params.impressions !== undefined) data.impressions = params.impressions;
   if (params.clicks !== undefined) data.clicks = params.clicks;
   if (params.orders !== undefined) data.orders = params.orders;
-  if (params.sales !== undefined) data.sales = new Prisma.Decimal(params.sales);
+  if (params.sales !== undefined) data.sales = params.sales;
 
   const campaign = await prisma.adCampaign.update({
     where: { id },

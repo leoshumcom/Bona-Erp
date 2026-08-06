@@ -35,10 +35,10 @@ export async function createLogistics(_userId: string, params: CreateLogisticsPa
   }
 
   // 计算总费用
-  const firstMileFee = params.firstMileFee != null ? new Prisma.Decimal(params.firstMileFee) : new Prisma.Decimal(0);
-  const internationalFee = params.internationalFee != null ? new Prisma.Decimal(params.internationalFee) : new Prisma.Decimal(0);
-  const lastMileFee = params.lastMileFee != null ? new Prisma.Decimal(params.lastMileFee) : new Prisma.Decimal(0);
-  const totalFee = Prisma.Decimal.add(firstMileFee, Prisma.Decimal.add(internationalFee, lastMileFee));
+  const firstMileFee = params.firstMileFee != null ? params.firstMileFee : 0;
+  const internationalFee = params.internationalFee != null ? params.internationalFee : 0;
+  const lastMileFee = params.lastMileFee != null ? params.lastMileFee : 0;
+  const totalFee = firstMileFee + internationalFee + lastMileFee;
 
   return prisma.logistics.create({
     data: {
@@ -205,10 +205,10 @@ export async function trackLogistics(trackingNumber: string) {
 export interface ShippingCostSummaryResult {
   stage: string;
   carrier: string;
-  totalFirstMile: Prisma.Decimal;
-  totalInternational: Prisma.Decimal;
-  totalLastMile: Prisma.Decimal;
-  totalFeeSum: Prisma.Decimal;
+  totalFirstMile: number;
+  totalInternational: number;
+  totalLastMile: number;
+  totalFeeSum: number;
   count: number;
 }
 
@@ -238,10 +238,10 @@ export async function getShippingCostSummary(startDate?: string, endDate?: strin
   const groups = new Map<string, {
     stage: string;
     carrier: string;
-    totalFirstMile: Prisma.Decimal;
-    totalInternational: Prisma.Decimal;
-    totalLastMile: Prisma.Decimal;
-    totalFeeSum: Prisma.Decimal;
+    totalFirstMile: number;
+    totalInternational: number;
+    totalLastMile: number;
+    totalFeeSum: number;
     count: number;
   }>();
 
@@ -249,10 +249,10 @@ export async function getShippingCostSummary(startDate?: string, endDate?: strin
     const key = `${r.stage}::${r.carrier ?? '未知'}`;
     const existing = groups.get(key);
     if (existing) {
-      existing.totalFirstMile = Prisma.Decimal.add(existing.totalFirstMile, r.firstMileFee);
-      existing.totalInternational = Prisma.Decimal.add(existing.totalInternational, r.internationalFee);
-      existing.totalLastMile = Prisma.Decimal.add(existing.totalLastMile, r.lastMileFee);
-      existing.totalFeeSum = Prisma.Decimal.add(existing.totalFeeSum, r.totalFee);
+      existing.totalFirstMile = existing.totalFirstMile + r.firstMileFee;
+      existing.totalInternational = existing.totalInternational + r.internationalFee;
+      existing.totalLastMile = existing.totalLastMile + r.lastMileFee;
+      existing.totalFeeSum = existing.totalFeeSum + r.totalFee;
       existing.count += 1;
     } else {
       groups.set(key, {

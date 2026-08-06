@@ -92,7 +92,7 @@ export async function createProductionOrder(
   }
 
   const orderNumber = await generateOrderNumber();
-  const quantity = new Prisma.Decimal(params.quantity);
+  const quantity = params.quantity;
 
   const order = await prisma.$transaction(async (tx) => {
     // 1. 创建工单头
@@ -121,10 +121,7 @@ export async function createProductionOrder(
             materialId: line.materialId,
             unitOfMeasureId: line.unitOfMeasureId,
             // 按 BOM 用量 * 工单数量 / BOM基础数量 计算计划用量
-            plannedQuantity: Prisma.Decimal.div(
-              Prisma.Decimal.mul(line.quantity, quantity),
-              bom.baseQuantity,
-            ),
+            plannedQuantity: (line.quantity * quantity) / bom.baseQuantity,
             notes: line.notes,
           },
         }),
@@ -332,7 +329,7 @@ export async function recordProductionCost(
     data: {
       productionOrderId: params.productionOrderId,
       costType: params.costType,
-      amount: new Prisma.Decimal(params.amount),
+      amount: params.amount,
       notes: params.notes,
     },
   });

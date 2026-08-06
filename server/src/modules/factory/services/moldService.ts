@@ -17,9 +17,9 @@ function generateMoldCode(): string {
 /**
  * 计算单件折旧金额 = 模具成本 / 使用寿命
  */
-function calcDepreciationPerUnit(moldCost: Prisma.Decimal, lifespan: number): Prisma.Decimal {
-  if (lifespan <= 0) return new Prisma.Decimal(0);
-  return Prisma.Decimal.div(moldCost, lifespan);
+function calcDepreciationPerUnit(moldCost: number, lifespan: number): number {
+  if (lifespan <= 0) return 0;
+  return moldCost / lifespan;
 }
 
 /** 创建模具 */
@@ -36,7 +36,7 @@ export async function createMold(
   },
 ) {
   const moldCode = params.moldCode || generateMoldCode();
-  const moldCost = new Prisma.Decimal(params.moldCost);
+  const moldCost = params.moldCost;
 
   const mold = await prisma.mold.create({
     data: {
@@ -78,7 +78,7 @@ export async function updateMold(
   const data: any = {};
   if (params.moldCode !== undefined) data.moldCode = params.moldCode;
   if (params.productId !== undefined) data.productId = params.productId;
-  if (params.moldCost !== undefined) data.moldCost = new Prisma.Decimal(params.moldCost);
+  if (params.moldCost !== undefined) data.moldCost = params.moldCost;
   if (params.lifespan !== undefined) data.lifespan = params.lifespan;
   if (params.startDate !== undefined) data.startDate = new Date(params.startDate);
   if (params.scrapDate !== undefined) data.scrapDate = params.scrapDate ? new Date(params.scrapDate) : null;
@@ -177,7 +177,7 @@ export async function recordMoldExpense(
     data: {
       moldId: params.moldId,
       type: params.type,
-      amount: new Prisma.Decimal(params.amount),
+      amount: params.amount,
       expenseDate: new Date(params.expenseDate),
       notes: params.notes,
     },
@@ -251,9 +251,9 @@ export async function getMoldExpenseSummary(moldId: string) {
     }),
   ]);
 
-  const expenseTotal = expensesTotal._sum.amount ?? new Prisma.Decimal(0);
-  const depTotal = depreciationTotal._sum.amount ?? new Prisma.Decimal(0);
-  const totalCost = Prisma.Decimal.add(mold.moldCost, expenseTotal);
+  const expenseTotal = expensesTotal._sum.amount ?? 0;
+  const depTotal = depreciationTotal._sum.amount ?? 0;
+  const totalCost = mold.moldCost + expenseTotal;
 
   return {
     moldCode: mold.moldCode,

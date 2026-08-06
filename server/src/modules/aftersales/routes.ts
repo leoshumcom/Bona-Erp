@@ -31,7 +31,7 @@ function handleError(res: Response, err: any, defaultMsg: string) {
 }
 
 // ============================================================
-// 售后工单
+// 一、售后工单
 // ============================================================
 
 /** POST / - 创建售后工单 */
@@ -70,40 +70,8 @@ router.get(
   },
 );
 
-/** GET /:id - 售后工单详情 */
-router.get(
-  '/:id',
-  requireRole('ADMIN', 'AFTERSALES', 'BOSS', 'VIEWER'),
-  async (req: AuthRequest, res: Response) => {
-    try {
-      const result = await aftersalesService.getAfterSalesDetail(req.params.id as string);
-      res.json(success(result, '查询成功'));
-    } catch (err: any) {
-      handleError(res, err, '查询售后工单详情失败');
-    }
-  },
-);
-
-/** PATCH /:id/status - 更新售后工单状态 */
-router.patch(
-  '/:id/status',
-  requireRole('ADMIN', 'AFTERSALES'),
-  async (req: AuthRequest, res: Response) => {
-    try {
-      const status = req.body.status as string;
-      if (!status || !['PENDING', 'PROCESSING', 'COMPLETED', 'REJECTED'].includes(status)) {
-        return res.status(400).json(error('状态值无效，可选: PENDING / PROCESSING / COMPLETED / REJECTED', 400));
-      }
-      const result = await aftersalesService.updateAfterSalesStatus(req.params.id as string, status, req.userId!);
-      res.json(success(result, '售后状态更新成功'));
-    } catch (err: any) {
-      handleError(res, err, '更新售后状态失败');
-    }
-  },
-);
-
 // ============================================================
-// 物流管理
+// 二、物流管理（必须在售后工单 :id 路由之前，避免 /logistics 被 :id 捕获）
 // ============================================================
 
 /** POST /logistics - 创建物流记录 */
@@ -142,7 +110,7 @@ router.get(
   },
 );
 
-/** GET /logistics/track/:trackingNumber - 按运单号追踪（必须定义在 :id 之前） */
+/** GET /logistics/track/:trackingNumber - 按运单号追踪 */
 router.get(
   '/logistics/track/:trackingNumber',
   requireRole('ADMIN', 'AFTERSALES', 'BOSS', 'VIEWER'),
@@ -204,6 +172,42 @@ router.patch(
       res.json(success(result, '物流状态更新成功'));
     } catch (err: any) {
       handleError(res, err, '更新物流状态失败');
+    }
+  },
+);
+
+// ============================================================
+// 三、售后工单详情与状态更新（带参数路由必须在物流路由之后注册）
+// ============================================================
+
+/** GET /:id - 售后工单详情 */
+router.get(
+  '/:id',
+  requireRole('ADMIN', 'AFTERSALES', 'BOSS', 'VIEWER'),
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const result = await aftersalesService.getAfterSalesDetail(req.params.id as string);
+      res.json(success(result, '查询成功'));
+    } catch (err: any) {
+      handleError(res, err, '查询售后工单详情失败');
+    }
+  },
+);
+
+/** PATCH /:id/status - 更新售后工单状态 */
+router.patch(
+  '/:id/status',
+  requireRole('ADMIN', 'AFTERSALES'),
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const status = req.body.status as string;
+      if (!status || !['PENDING', 'PROCESSING', 'COMPLETED', 'REJECTED'].includes(status)) {
+        return res.status(400).json(error('状态值无效，可选: PENDING / PROCESSING / COMPLETED / REJECTED', 400));
+      }
+      const result = await aftersalesService.updateAfterSalesStatus(req.params.id as string, status, req.userId!);
+      res.json(success(result, '售后状态更新成功'));
+    } catch (err: any) {
+      handleError(res, err, '更新售后状态失败');
     }
   },
 );
