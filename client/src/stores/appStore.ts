@@ -30,12 +30,10 @@ export const useAppStore = create<AppState>((set) => ({
   sidebarCollapsed: false,
 
   login: async (username: string, password: string) => {
-    const { data } = await api.post<AuthResponse>('/api/auth/login', {
-      username,
-      password,
-    });
-    localStorage.setItem('token', data.token);
-    set({ token: data.token, user: data.user });
+    const res = await api.post('/api/auth/login', { username, password });
+    const payload = res.data.data; // API返回 { data: { token, user } }
+    localStorage.setItem('token', payload.token);
+    set({ token: payload.token, user: payload.user });
   },
 
   logout: () => {
@@ -44,8 +42,8 @@ export const useAppStore = create<AppState>((set) => ({
   },
 
   fetchProfile: async () => {
-    const { data } = await api.get<UserInfo>('/api/auth/profile');
-    set({ user: data });
+    const res = await api.get('/api/auth/profile');
+    set({ user: res.data.data }); // API返回 { data: { user } }
   },
 
   toggleSidebar: () => {
