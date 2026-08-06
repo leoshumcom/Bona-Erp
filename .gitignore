@@ -34,3 +34,8 @@ server/prisma/migrations/
 
 # PDF / Documents
 *.pdf
+
+# Cloudflare
+.wrangler/
+dev.vars
+

@@ -10,7 +10,11 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "cf:dev": "wrangler dev src/worker.ts",
+    "cf:deploy": "wrangler deploy",
+    "cf:tail": "wrangler tail",
+    "cf:login": "wrangler login"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
@@ -19,6 +23,7 @@
     "express": "^4.21.1",
     "express-rate-limit": "^7.4.1",
     "helmet": "^8.0.0",
+    "hono": "^4.6.14",
     "jsonwebtoken": "^9.0.2",
     "bcryptjs": "^2.4.3",
     "zod": "^3.23.8",
@@ -33,6 +38,7 @@
     "@types/node": "^22.9.0",
     "prisma": "^5.22.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "wrangler": "^3.107.0"
   }
 }

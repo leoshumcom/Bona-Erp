@@ -1,0 +1,8 @@
+/* Cloudflare Pages 单页应用路由 - 所有路径重定向到 index.html */
+{
+  "routes": [
+    { "handle": "filesystem" },
+    { "src": "/assets/.*", "status": 200 },
+    { "src": ".*", "dest": "/index.html" }
+  ]
+}
