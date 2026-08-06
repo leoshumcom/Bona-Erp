@@ -1,4 +1,4 @@
-import { BrowserRouter as Router } from 'react-router-dom';
+import { BrowserRouter } from 'react-router-dom';
 import { ConfigProvider } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import dayjs from 'dayjs';
@@ -17,9 +17,9 @@ function App() {
         },
       }}
     >
-      <Router>
+      <BrowserRouter>
         <AppRoutes />
-      </Router>
+      </BrowserRouter>
     </ConfigProvider>
   );
 }

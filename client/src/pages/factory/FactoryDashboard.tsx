@@ -1,47 +1,40 @@
-import { Card, Row, Col, Statistic, Table, Button, Space } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { Card, Row, Col, Statistic, Typography } from 'antd';
+import { ToolOutlined } from '@ant-design/icons';
 
-const moldColumns = [
-  { title: '模具编号', dataIndex: 'moldCode', key: 'moldCode' },
-  { title: '对应产品SKU', dataIndex: 'sku', key: 'sku' },
-  { title: '开模成本', dataIndex: 'cost', key: 'cost' },
-  { title: '使用寿命', dataIndex: 'lifespan', key: 'lifespan' },
-  { title: '状态', dataIndex: 'status', key: 'status' },
-  { title: '操作', key: 'action', render: () => <a>详情</a> },
-];
+const { Title } = Typography;
 
 function FactoryDashboard() {
   return (
     <div>
-      <h2>工厂端 - 生产成本管理</h2>
-      <Row gutter={[16, 16]} style={{ marginTop: 24 }}>
-        <Col span={6}>
+      <div style={{ marginBottom: 24 }}>
+        <Title level={4} style={{ margin: 0 }}>
+          工厂管理
+        </Title>
+      </div>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} sm={12} lg={6}>
           <Card>
-            <Statistic title="本月生产订单" value={0} />
+            <Statistic title="本月生产订单" value={0} prefix={<ToolOutlined />} />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={24} sm={12} lg={6}>
           <Card>
             <Statistic title="本月生产成本" value={0} prefix="$" />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={24} sm={12} lg={6}>
           <Card>
-            <Statistic title="模具总数" value={0} />
+            <Statistic title="模具总数" value={0} prefix={<ToolOutlined />} />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={24} sm={12} lg={6}>
           <Card>
-            <Statistic title="BOM物料数" value={0} />
+            <Statistic title="BOM物料数" value={0} prefix={<ToolOutlined />} />
           </Card>
         </Col>
       </Row>
-      <Card
-        title="模具管理"
-        style={{ marginTop: 24 }}
-        extra={<Button type="primary" icon={<PlusOutlined />}>新增模具</Button>}
-      >
-        <Table columns={moldColumns} dataSource={[]} />
+      <Card style={{ marginTop: 24 }}>
+        <Typography.Text type="secondary">工厂管理数据看板开发中...</Typography.Text>
       </Card>
     </div>
   );

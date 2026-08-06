@@ -1,58 +1,50 @@
-import { Card, Row, Col, Statistic, Tabs, Table } from 'antd';
+import { Card, Row, Col, Statistic, Typography } from 'antd';
+import { SettingOutlined } from '@ant-design/icons';
 
-const orderColumns = [
-  { title: '订单号', dataIndex: 'orderNo', key: 'orderNo' },
-  { title: '店铺', dataIndex: 'store', key: 'store' },
-  { title: 'SKU', dataIndex: 'sku', key: 'sku' },
-  { title: '数量', dataIndex: 'quantity', key: 'quantity' },
-  { title: '销售额', dataIndex: 'amount', key: 'amount' },
-  { title: '利润', dataIndex: 'profit', key: 'profit' },
-];
+const { Title } = Typography;
 
 function OperationDashboard() {
   return (
     <div>
-      <h2>运营端 - 店铺运营与利润管理</h2>
-      <Row gutter={[16, 16]} style={{ marginTop: 24 }}>
-        <Col span={4}>
+      <div style={{ marginBottom: 24 }}>
+        <Title level={4} style={{ margin: 0 }}>
+          运营管理
+        </Title>
+      </div>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} sm={8} lg={4}>
           <Card>
             <Statistic title="今日销售额" value={0} prefix="$" />
           </Card>
         </Col>
-        <Col span={4}>
+        <Col xs={24} sm={8} lg={4}>
           <Card>
-            <Statistic title="今日订单量" value={0} />
+            <Statistic title="今日订单量" value={0} prefix={<SettingOutlined />} />
           </Card>
         </Col>
-        <Col span={4}>
+        <Col xs={24} sm={8} lg={4}>
           <Card>
             <Statistic title="广告花费" value={0} prefix="$" />
           </Card>
         </Col>
-        <Col span={4}>
+        <Col xs={24} sm={8} lg={4}>
           <Card>
             <Statistic title="ACoS" value={0} suffix="%" />
           </Card>
         </Col>
-        <Col span={4}>
+        <Col xs={24} sm={8} lg={4}>
           <Card>
             <Statistic title="毛利率" value={0} suffix="%" />
           </Card>
         </Col>
-        <Col span={4}>
+        <Col xs={24} sm={8} lg={4}>
           <Card>
             <Statistic title="净利率" value={0} suffix="%" />
           </Card>
         </Col>
       </Row>
       <Card style={{ marginTop: 24 }}>
-        <Tabs
-          items={[
-            { key: 'orders', label: '订单列表', children: <Table columns={orderColumns} dataSource={[]} /> },
-            { key: 'ads', label: '广告计划', children: <p>广告管理 - 待开发</p> },
-            { key: 'profit', label: '利润报表', children: <p>利润报表 - 待开发</p> },
-          ]}
-        />
+        <Typography.Text type="secondary">运营管理数据看板开发中...</Typography.Text>
       </Card>
     </div>
   );

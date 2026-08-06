@@ -23,13 +23,18 @@ app.get('/api/health', (_req, res) => {
 });
 
 // 路由注册
-// app.use('/api/auth', authRoutes);
-// app.use('/api/factory', factoryRoutes);
+import authRoutes from './modules/auth';
+app.use('/api/auth', authRoutes);
+import factoryRoutes from './modules/factory';
+app.use('/api/factory', factoryRoutes);
 import warehouseRoutes from './modules/warehouse/routes';
 app.use('/api/warehouse', warehouseRoutes);
-// app.use('/api/operation', operationRoutes);
-// app.use('/api/aftersales', aftersalesRoutes);
-// app.use('/api/boss', bossRoutes);
+import operationRoutes from './modules/operation';
+app.use('/api/operation', operationRoutes);
+import aftersalesRoutes from './modules/aftersales';
+app.use('/api/aftersales', aftersalesRoutes);
+import bossRoutes from './modules/boss';
+app.use('/api/boss', bossRoutes);
 
 const PORT = process.env.PORT || 3000;
 
