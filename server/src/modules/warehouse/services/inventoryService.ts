@@ -1,7 +1,6 @@
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { prisma } from '../../../common/prisma';
 import { computeFIFOAllocation, computeFIFOTotalCost, FIFOInsufficientError, type LotLike, type FIFOAllocation } from './fifo';
-
-const prisma = new PrismaClient();
 
 // ============================================================
 // 工具函数
@@ -873,26 +872,17 @@ export async function createCountPlan(
     notes?: string;
   },
 ) {
-  // 盘点计划暂时以 JSON 方式存储，后续可建独立表
-  // 此处创建为一条日志记录，关联仓库
-  return prisma.inventoryLedger.create({
-    data: {
-      movementType: 'ADJUSTMENT',
-      productId: '00000000-0000-0000-0000-000000000000', // 占位
-      storageLocationId: '00000000-0000-0000-0000-000000000000',
-      quantity: new Prisma.Decimal(0),
-      unitOfMeasureId: '00000000-0000-0000-0000-000000000000',
-      referenceType: 'CountPlan',
-      referenceId: `COUNT-${Date.now()}`,
-      postedById: operatorId,
-      notes: JSON.stringify({
-        type: 'COUNT_PLAN',
-        warehouseId: params.warehouseId,
-        planDate: params.planDate,
-        notes: params.notes,
-      }),
-    },
-  });
+  // 盘点计划以 JSON 方式存储并返回，后续可建独立 CountPlan 表
+  // 注意：不再写入 inventoryLedger 表（该表依赖 productId/storageLocationId/unitOfMeasureId 外键）
+  return {
+    id: `COUNT-${Date.now().toString(36).toUpperCase()}`,
+    type: 'COUNT_PLAN',
+    warehouseId: params.warehouseId,
+    planDate: params.planDate,
+    notes: params.notes || null,
+    createdBy: operatorId,
+    createdAt: new Date().toISOString(),
+  };
 }
 
 /** 执行盘点差异调整 */

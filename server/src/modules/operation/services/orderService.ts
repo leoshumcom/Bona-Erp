@@ -1,6 +1,5 @@
-import { PrismaClient, Prisma } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { Prisma } from '@prisma/client';
+import { prisma } from '../../../common/prisma';
 
 // ============================================================
 // 工具函数
@@ -9,7 +8,7 @@ const prisma = new PrismaClient();
 /** 生成订单号: ORD-YYYYMMDD-{seq} */
 function generateOrderNumber(): string {
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const seq = Math.floor(Math.random() * 100000).toString().padStart(5, '0');
+  const seq = Date.now().toString(36).toUpperCase().slice(-5);
   return `ORD-${date}-${seq}`;
 }
 

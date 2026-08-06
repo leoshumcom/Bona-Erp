@@ -1,6 +1,5 @@
-import { PrismaClient, Prisma } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { Prisma } from '@prisma/client';
+import { prisma } from '../../../common/prisma';
 
 // ============================================================
 // 一、计算单笔订单利润
@@ -35,16 +34,16 @@ export async function calculateOrderProfit(orderId: string, userId: string) {
     let warehouseCost = new Prisma.Decimal(0);
     try {
       warehouseCost = await getWarehouseCostAllocation(tx, order);
-    } catch {
-      // 无仓储费用数据时默认为0
+    } catch (err: any) {
+      console.error('Failed to calculate warehouse cost:', err.message);
     }
 
     // 3. 广告费分摊：订单所属店铺的广告花费 / 该店铺同期订单数
     let adCost = new Prisma.Decimal(0);
     try {
       adCost = await getAdCostAllocation(tx, order);
-    } catch {
-      // 无广告数据时默认为0
+    } catch (err: any) {
+      console.error('Failed to calculate ad cost:', err.message);
     }
 
     // 4. 平台费用：从 OrderFee 中汇总 platform_commission

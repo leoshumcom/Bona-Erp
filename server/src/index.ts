@@ -3,12 +3,11 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from './common/prisma';
 
 dotenv.config();
 
 const app = express();
-export const prisma = new PrismaClient();
 
 // 中间件
 app.use(helmet());
@@ -35,6 +34,8 @@ import aftersalesRoutes from './modules/aftersales';
 app.use('/api/aftersales', aftersalesRoutes);
 import bossRoutes from './modules/boss';
 app.use('/api/boss', bossRoutes);
+import adminRoutes from './modules/admin';
+app.use('/api/admin', adminRoutes);
 
 const PORT = process.env.PORT || 3000;
 

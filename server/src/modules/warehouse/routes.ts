@@ -17,6 +17,7 @@ function getValidationErrors(result: { success: false; error: any }) {
 
 /** 统一错误响应 */
 function handleError(res: Response, err: any, defaultMsg: string) {
+  console.error('Warehouse error:', err);
   if (err instanceof InsufficientStockError) {
     return res.status(409).json(error(`库存不足: 需要 ${err.needed}, 当前库存 ${err.onHand}`, 409));
   }

@@ -1,12 +1,16 @@
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma } from '../../../common/prisma';
 
 // ============================================================
 // 工具函数
 // ============================================================
 
-/** 将 Prisma Decimal 转为 number */
+/**
+ * 将 Prisma Decimal 转为 number（仅用于前端图表展示）。
+ *
+ * 注意：此转换可能丢失 Decimal 的高精度（最多保留 ~15 位有效数字），
+ * 不适用于需要精确计算的财务记账场景。生产环境建议在前端使用字符串形式
+ * 的 Decimal 值来避免浮点精度问题。
+ */
 function toNum(v: any): number {
   if (v === null || v === undefined) return 0;
   if (typeof v === 'number') return v;

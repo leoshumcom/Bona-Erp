@@ -1,6 +1,5 @@
-import { PrismaClient, Prisma } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { Prisma } from '@prisma/client';
+import { prisma } from '../../../common/prisma';
 
 // ============================================================
 // 一、模具管理
@@ -11,7 +10,7 @@ const prisma = new PrismaClient();
  */
 function generateMoldCode(): string {
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const seq = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  const seq = Date.now().toString(36).toUpperCase().slice(-4);
   return `MOLD-${date}-${seq}`;
 }
 

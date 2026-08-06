@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { authMiddleware, requireRole, AuthRequest } from '../../common/middleware';
 import { success, error } from '../../common/response';
 import * as dashboardService from './services/dashboardService';
+import * as s from './schemas';
 
 const router = Router();
 
@@ -9,17 +10,29 @@ const router = Router();
 router.use(authMiddleware);
 router.use(requireRole('ADMIN', 'BOSS'));
 
+/** 统一处理校验错误 */
+function getValidationErrors(result: { success: false; error: any }) {
+  return result.error.issues?.map((i: any) => `${i.path.join('.')}: ${i.message}`).join('; ');
+}
+
+/** 统一错误响应 */
+function handleError(res: Response, err: any, defaultMsg: string) {
+  console.error('Boss dashboard error:', err);
+  return res.status(500).json(error(err.message || defaultMsg, 500));
+}
+
 // ============================================================
 // GET /dashboard/snapshot - 每日经营快照
 // ============================================================
 router.get('/dashboard/snapshot', async (req: AuthRequest, res: Response) => {
   try {
-    const dateStr = req.query.date as string | undefined;
-    const result = await dashboardService.getDailySnapshot(dateStr);
+    const parsed = s.dateQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json(error(getValidationErrors(parsed), 400));
+    }
+    const result = await dashboardService.getDailySnapshot(parsed.data.date);
     res.json(success(result, '查询成功'));
-  } catch (err: any) {
-    res.status(500).json(error(err.message || '查询快照失败', 500));
-  }
+  } catch (err: any) { handleError(res, err, '查询快照失败'); }
 });
 
 // ============================================================
@@ -27,15 +40,13 @@ router.get('/dashboard/snapshot', async (req: AuthRequest, res: Response) => {
 // ============================================================
 router.get('/dashboard/revenue-trend', async (req: AuthRequest, res: Response) => {
   try {
-    const period = (req.query.period as string) || '7d';
-    if (!['7d', '30d', '12m'].includes(period)) {
-      return res.status(400).json(error('参数 period 必须为 7d、30d 或 12m', 400));
+    const parsed = s.periodQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json(error(getValidationErrors(parsed), 400));
     }
-    const result = await dashboardService.getRevenueTrend(period as '7d' | '30d' | '12m');
+    const result = await dashboardService.getRevenueTrend(parsed.data.period as '7d' | '30d' | '12m');
     res.json(success(result, '查询成功'));
-  } catch (err: any) {
-    res.status(500).json(error(err.message || '查询收入趋势失败', 500));
-  }
+  } catch (err: any) { handleError(res, err, '查询收入趋势失败'); }
 });
 
 // ============================================================
@@ -43,13 +54,13 @@ router.get('/dashboard/revenue-trend', async (req: AuthRequest, res: Response) =
 // ============================================================
 router.get('/dashboard/stores', async (req: AuthRequest, res: Response) => {
   try {
-    const startDate = req.query.startDate as string | undefined;
-    const endDate = req.query.endDate as string | undefined;
-    const result = await dashboardService.getStorePerformance(startDate, endDate);
+    const parsed = s.dateRangeQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json(error(getValidationErrors(parsed), 400));
+    }
+    const result = await dashboardService.getStorePerformance(parsed.data.startDate, parsed.data.endDate);
     res.json(success(result, '查询成功'));
-  } catch (err: any) {
-    res.status(500).json(error(err.message || '查询店铺业绩失败', 500));
-  }
+  } catch (err: any) { handleError(res, err, '查询店铺业绩失败'); }
 });
 
 // ============================================================
@@ -57,13 +68,13 @@ router.get('/dashboard/stores', async (req: AuthRequest, res: Response) => {
 // ============================================================
 router.get('/dashboard/products', async (req: AuthRequest, res: Response) => {
   try {
-    const startDate = req.query.startDate as string | undefined;
-    const endDate = req.query.endDate as string | undefined;
-    const result = await dashboardService.getProductProfitability(startDate, endDate);
+    const parsed = s.dateRangeQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json(error(getValidationErrors(parsed), 400));
+    }
+    const result = await dashboardService.getProductProfitability(parsed.data.startDate, parsed.data.endDate);
     res.json(success(result, '查询成功'));
-  } catch (err: any) {
-    res.status(500).json(error(err.message || '查询产品盈利能力失败', 500));
-  }
+  } catch (err: any) { handleError(res, err, '查询产品盈利能力失败'); }
 });
 
 // ============================================================
@@ -71,13 +82,13 @@ router.get('/dashboard/products', async (req: AuthRequest, res: Response) => {
 // ============================================================
 router.get('/dashboard/cost-structure', async (req: AuthRequest, res: Response) => {
   try {
-    const startDate = req.query.startDate as string | undefined;
-    const endDate = req.query.endDate as string | undefined;
-    const result = await dashboardService.getCostStructure(startDate, endDate);
+    const parsed = s.dateRangeQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json(error(getValidationErrors(parsed), 400));
+    }
+    const result = await dashboardService.getCostStructure(parsed.data.startDate, parsed.data.endDate);
     res.json(success(result, '查询成功'));
-  } catch (err: any) {
-    res.status(500).json(error(err.message || '查询成本结构失败', 500));
-  }
+  } catch (err: any) { handleError(res, err, '查询成本结构失败'); }
 });
 
 // ============================================================
@@ -87,9 +98,7 @@ router.get('/dashboard/alerts', async (_req: AuthRequest, res: Response) => {
   try {
     const result = await dashboardService.getAlerts();
     res.json(success(result, '查询成功'));
-  } catch (err: any) {
-    res.status(500).json(error(err.message || '查询预警失败', 500));
-  }
+  } catch (err: any) { handleError(res, err, '查询预警失败'); }
 });
 
 // ============================================================
@@ -99,9 +108,7 @@ router.get('/dashboard/kpi', async (_req: AuthRequest, res: Response) => {
   try {
     const result = await dashboardService.getKPIOverview();
     res.json(success(result, '查询成功'));
-  } catch (err: any) {
-    res.status(500).json(error(err.message || '查询KPI指标失败', 500));
-  }
+  } catch (err: any) { handleError(res, err, '查询KPI指标失败'); }
 });
 
 export default router;
