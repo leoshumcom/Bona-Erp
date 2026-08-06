@@ -22,10 +22,11 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// 路由注册（后续按模块挂载）
+// 路由注册
 // app.use('/api/auth', authRoutes);
 // app.use('/api/factory', factoryRoutes);
-// app.use('/api/warehouse', warehouseRoutes);
+import warehouseRoutes from './modules/warehouse/routes';
+app.use('/api/warehouse', warehouseRoutes);
 // app.use('/api/operation', operationRoutes);
 // app.use('/api/aftersales', aftersalesRoutes);
 // app.use('/api/boss', bossRoutes);
