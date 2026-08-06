@@ -1,0 +1,521 @@
+// ============================================
+// 参考来源: https://github.com/thisisyashu/factoryos-erp
+// 用途: 博纳ERP - 制造业模块 Schema 参考
+// 复用范围: BOM、ProductionOrder、WorkCenter、Inventory(Ledger+Balance)
+//           MaterialLot(FIFO)、AuditLog、MRP/PlanningRun
+// 亮点: 不可变库存账本(Immutable Ledger)、Decimal 精度、FIFO 批次追踪
+// ============================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  REQUESTER
+  STEWARD
+  APPROVER
+  ADMIN
+  VIEWER
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         UserRole @default(REQUESTER)
+  department   String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  mdgRequestsCreated  MdgRequest[]  @relation("RequestedBy")
+  mdgApprovals        MdgApproval[]
+  auditLogs           AuditLog[]
+
+  prRequested  PurchaseRequisition[] @relation("PrRequestedBy")
+  prApproved   PurchaseRequisition[] @relation("PrApprovedBy")
+  poRequested  PurchaseOrder[]       @relation("PoRequestedBy")
+  poApproved   PurchaseOrder[]       @relation("PoApprovedBy")
+  grReceived   GoodsReceipt[]        @relation("GrReceivedBy")
+  ledgerPosted InventoryLedger[]     @relation("LedgerPostedBy")
+
+  bomsCreated              BillOfMaterials[]   @relation("BomCreatedBy")
+  routingsCreated          Routing[]           @relation("RoutingCreatedBy")
+  productionOrdersCreated  ProductionOrder[]   @relation("PoCreatedBy")
+  productionOrdersReleased ProductionOrder[]   @relation("PoReleasedBy")
+
+  lotConsumptionsPosted    MaterialLotConsumption[] @relation("LotConsumptionPostedBy")
+
+  forecastsCreated         DemandForecast[]           @relation("ForecastCreatedBy")
+  planningRunsBy           PlanningRun[]              @relation("PlanningRunBy")
+  recommendationsConverted ProductionRecommendation[] @relation("RecommendationConvertedBy")
+}
+
+enum MasterDataStatus {
+  DRAFT
+  SUBMITTED
+  IN_REVIEW
+  APPROVED
+  ACTIVE
+  INACTIVE
+  REJECTED
+}
+
+enum MaterialType {
+  RAW_MATERIAL
+  COMPONENT
+  SEMI_FINISHED
+  FINISHED_GOOD
+  CONSUMABLE
+  SPARE_PART
+}
+
+model UnitOfMeasure {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  description String
+  category    String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  materials   Material[]
+
+  prLines           PurchaseRequisitionLine[]
+  poLines           PurchaseOrderLine[]
+  grLines           GoodsReceiptLine[]
+  inventoryLedger   InventoryLedger[]
+  inventoryBalances InventoryBalance[]
+
+  bomLines                     BillOfMaterialLine[]
+  productionOrderHeaderUoms    ProductionOrder[]            @relation("PoUom")
+  productionOrderComponentUoms ProductionOrderComponent[]   @relation("PoComponentUom")
+
+  materialLots          MaterialLot[]
+  finishedGoodLotUoms   FinishedGoodLot[]            @relation("FgLotUom")
+
+  demandForecasts       DemandForecast[]             @relation("DemandForecastUom")
+}
+
+model Material {
+  id              String           @id @default(cuid())
+  materialNumber  String           @unique
+  name            String
+  description     String?
+  type            MaterialType
+  status          MasterDataStatus @default(DRAFT)
+
+  unitOfMeasureId String
+  unitOfMeasure   UnitOfMeasure    @relation(fields: [unitOfMeasureId], references: [id])
+  weightKg        Decimal?         @db.Decimal(12, 4)
+  hazardClass     String?
+  shelfLifeDays   Int?
+
+  standardCost    Decimal?         @db.Decimal(14, 4)
+  leadTimeDays    Int?
+
+  dataQualityScore Int             @default(0)
+  createdById      String
+  approvedById     String?
+  approvedAt       DateTime?
+  activatedAt      DateTime?
+
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  mdgRequests      MdgRequest[]
+
+  prLines           PurchaseRequisitionLine[]
+  poLines           PurchaseOrderLine[]
+  grLines           GoodsReceiptLine[]
+  inventoryLedger   InventoryLedger[]
+  inventoryBalances InventoryBalance[]
+
+  bomsAsParent              BillOfMaterials[]            @relation("BomParent")
+  bomLinesAsComponent       BillOfMaterialLine[]         @relation("BomComponent")
+  routingsAsParent          Routing[]                    @relation("RoutingParent")
+  productionOrdersAsParent  ProductionOrder[]            @relation("PoParent")
+  productionOrderComponents ProductionOrderComponent[]   @relation("PoComponentMaterial")
+
+  materialLots     MaterialLot[]
+  finishedGoodLots FinishedGoodLot[]     @relation("FgLotMaterial")
+
+  demandForecasts          DemandForecast[]           @relation("DemandForecastMaterial")
+  productionRecommendations ProductionRecommendation[] @relation("RecommendationMaterial")
+
+  @@index([status])
+  @@index([type])
+}
+
+model Supplier {
+  id               String           @id @default(cuid())
+  supplierNumber   String           @unique
+  legalName        String
+  tradeName        String?
+  taxId            String?
+  status           MasterDataStatus @default(DRAFT)
+
+  contactEmail     String?
+  contactPhone     String?
+  addressLine1     String?
+  addressLine2     String?
+  city             String?
+  stateRegion      String?
+  postalCode       String?
+  country          String?
+
+  paymentTermsDays Int?
+  currency         String?
+  preferredFlag    Boolean          @default(false)
+
+  dataQualityScore Int              @default(0)
+  createdById      String
+  approvedById     String?
+  approvedAt       DateTime?
+  activatedAt      DateTime?
+
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  mdgRequests      MdgRequest[]
+
+  purchaseOrders PurchaseOrder[]
+  materialLots   MaterialLot[]   @relation("LotSupplier")
+
+  @@index([status])
+}
+
+// ========== 审计日志（不可变账本模式）==========
+model AuditLog {
+  id          String   @id @default(cuid())
+  entityType  String
+  entityId    String
+  action      String
+  actorId     String
+  actor       User     @relation(fields: [actorId], references: [id])
+  beforeState Json?
+  afterState  Json?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([createdAt])
+}
+
+// ========== 仓库 & 库位 ==========
+model Warehouse {
+  id           String   @id @default(cuid())
+  code         String   @unique
+  name         String
+  description  String?
+  addressLine1 String?
+  city         String?
+  country      String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  storageLocations StorageLocation[]
+}
+
+model StorageLocation {
+  id          String   @id @default(cuid())
+  code        String
+  description String?
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+
+  inventoryLedger   InventoryLedger[]
+  inventoryBalances InventoryBalance[]
+  goodsReceiptLines GoodsReceiptLine[]
+  materialLots      MaterialLot[]
+  finishedGoodLots  FinishedGoodLot[] @relation("FgLotLocation")
+
+  @@unique([warehouseId, code])
+}
+
+// ========== 采购流程: PR → PO → GR ==========
+enum PurchaseRequisitionStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  CONVERTED_TO_PO
+  CANCELLED
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  SENT
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CLOSED
+  CANCELLED
+}
+
+enum GoodsReceiptStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+// ========== 库存账本（不可变模式）==========
+enum InventoryMovementType {
+  GOODS_RECEIPT
+  PRODUCTION_RECEIPT
+  MATERIAL_ISSUE
+  STOCK_TRANSFER
+  ADJUSTMENT
+  SHIPMENT
+}
+
+model InventoryLedger {
+  id           String                @id @default(cuid())
+  movementType InventoryMovementType
+
+  materialId        String
+  material          Material        @relation(fields: [materialId], references: [id])
+  storageLocationId String
+  storageLocation   StorageLocation @relation(fields: [storageLocationId], references: [id])
+
+  quantity        Decimal       @db.Decimal(14, 4)
+  unitOfMeasureId String
+  unitOfMeasure   UnitOfMeasure @relation(fields: [unitOfMeasureId], references: [id])
+
+  referenceType String
+  referenceId   String
+
+  postedById String
+  postedBy   User     @relation("LedgerPostedBy", fields: [postedById], references: [id])
+  postedAt   DateTime @default(now())
+
+  notes String?
+
+  @@index([materialId])
+  @@index([storageLocationId])
+  @@index([materialId, storageLocationId])
+  @@index([referenceType, referenceId])
+  @@index([postedAt])
+}
+
+model InventoryBalance {
+  id String @id @default(cuid())
+
+  materialId        String
+  material          Material        @relation(fields: [materialId], references: [id])
+  storageLocationId String
+  storageLocation   StorageLocation @relation(fields: [storageLocationId], references: [id])
+
+  quantityOnHand  Decimal       @default(0) @db.Decimal(16, 4)
+  unitOfMeasureId String
+  unitOfMeasure   UnitOfMeasure @relation(fields: [unitOfMeasureId], references: [id])
+
+  lastMovementAt DateTime?
+  updatedAt      DateTime @updatedAt
+
+  @@unique([materialId, storageLocationId])
+  @@index([materialId])
+  @@index([storageLocationId])
+}
+
+// ========== BOM + 工艺路线 + 工作中心 ==========
+enum BillOfMaterialsStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+}
+
+enum WorkCenterType {
+  MACHINE
+  MANUAL
+  ASSEMBLY
+  INSPECTION
+  PACKAGING
+}
+
+model WorkCenter {
+  id                   String          @id @default(cuid())
+  code                 String          @unique
+  name                 String
+  description          String?
+  type                 WorkCenterType
+  capacityHoursPerDay  Decimal?        @db.Decimal(8, 2)
+  isActive             Boolean         @default(true)
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  routingOperations         RoutingOperation[]
+  productionOrderOperations ProductionOrderOperation[]
+}
+
+model BillOfMaterials {
+  id               String                @id @default(cuid())
+  bomNumber        String                @unique
+  parentMaterialId String
+  parentMaterial   Material              @relation("BomParent", fields: [parentMaterialId], references: [id])
+  version          Int                   @default(1)
+  status           BillOfMaterialsStatus @default(DRAFT)
+  description      String?
+  baseQuantity     Decimal               @default(1) @db.Decimal(14, 4)
+
+  createdById      String
+  createdBy        User                  @relation("BomCreatedBy", fields: [createdById], references: [id])
+
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  lines            BillOfMaterialLine[]
+  productionOrders ProductionOrder[]
+
+  @@unique([parentMaterialId, version])
+  @@index([parentMaterialId, status])
+}
+
+model BillOfMaterialLine {
+  id                  String          @id @default(cuid())
+  bomId               String
+  bom                 BillOfMaterials @relation(fields: [bomId], references: [id], onDelete: Cascade)
+  lineNumber          Int
+
+  componentMaterialId String
+  componentMaterial   Material        @relation("BomComponent", fields: [componentMaterialId], references: [id])
+  quantity            Decimal         @db.Decimal(14, 4)
+  unitOfMeasureId     String
+  unitOfMeasure       UnitOfMeasure   @relation(fields: [unitOfMeasureId], references: [id])
+  scrapPercent        Decimal         @default(0) @db.Decimal(5, 2)
+  notes               String?
+
+  @@unique([bomId, lineNumber])
+}
+
+// ========== 生产订单 ==========
+enum ProductionOrderStatus {
+  DRAFT
+  RELEASED
+  IN_PROGRESS
+  COMPLETED
+  CLOSED
+  CANCELLED
+}
+
+model ProductionOrder {
+  id               String                @id @default(cuid())
+  orderNumber      String                @unique
+  status           ProductionOrderStatus @default(DRAFT)
+
+  parentMaterialId String
+  parentMaterial   Material              @relation("PoParent", fields: [parentMaterialId], references: [id])
+  quantity         Decimal               @db.Decimal(14, 4)
+  unitOfMeasureId  String
+  unitOfMeasure    UnitOfMeasure         @relation("PoUom", fields: [unitOfMeasureId], references: [id])
+
+  bomId     String
+  bom       BillOfMaterials @relation(fields: [bomId], references: [id])
+  routingId String?
+  routing   Routing?        @relation(fields: [routingId], references: [id])
+
+  plannedStartDate DateTime?
+  plannedEndDate   DateTime?
+  releasedAt       DateTime?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  closedAt         DateTime?
+
+  completedQuantity Decimal @default(0) @db.Decimal(14, 4)
+  scrappedQuantity  Decimal @default(0) @db.Decimal(14, 4)
+
+  createdById   String
+  createdBy     User    @relation("PoCreatedBy", fields: [createdById], references: [id])
+  releasedById  String?
+  releasedBy    User?   @relation("PoReleasedBy", fields: [releasedById], references: [id])
+
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  components       ProductionOrderComponent[]
+  operations       ProductionOrderOperation[]
+  finishedGoodLots FinishedGoodLot[]
+
+  @@index([status])
+  @@index([parentMaterialId])
+}
+
+// ========== FIFO 批次管理 ==========
+model MaterialLot {
+  id                String          @id @default(cuid())
+  lotNumber         String          @unique
+
+  materialId        String
+  material          Material        @relation(fields: [materialId], references: [id])
+
+  quantityReceived  Decimal         @db.Decimal(16, 4)
+  quantityRemaining Decimal         @db.Decimal(16, 4)
+  unitOfMeasureId   String
+  unitOfMeasure     UnitOfMeasure   @relation(fields: [unitOfMeasureId], references: [id])
+  storageLocationId String
+  storageLocation   StorageLocation @relation(fields: [storageLocationId], references: [id])
+
+  sourceType        String          // "GoodsReceipt" | "InitialStock"
+  sourceRefId       String
+  supplierId        String?
+  supplier          Supplier?       @relation("LotSupplier", fields: [supplierId], references: [id])
+  receivedAt        DateTime
+
+  notes             String?
+  createdAt         DateTime        @default(now())
+
+  consumptions      MaterialLotConsumption[]
+
+  @@index([materialId, quantityRemaining])
+  @@index([sourceType, sourceRefId])
+  @@index([materialId, storageLocationId, quantityRemaining])
+}
+
+model MaterialLotConsumption {
+  id                         String                   @id @default(cuid())
+  productionOrderComponentId String
+  productionOrderComponent   ProductionOrderComponent @relation(fields: [productionOrderComponentId], references: [id], onDelete: Cascade)
+  materialLotId              String
+  materialLot                MaterialLot              @relation(fields: [materialLotId], references: [id])
+  quantity                   Decimal                  @db.Decimal(16, 4)
+  postedById                 String
+  postedBy                   User                     @relation("LotConsumptionPostedBy", fields: [postedById], references: [id])
+  postedAt                   DateTime                 @default(now())
+  notes                      String?
+
+  @@index([productionOrderComponentId])
+  @@index([materialLotId])
+}
+
+model FinishedGoodLot {
+  id                String          @id @default(cuid())
+  lotNumber         String          @unique
+
+  materialId        String
+  material          Material        @relation("FgLotMaterial", fields: [materialId], references: [id])
+  productionOrderId String
+  productionOrder   ProductionOrder @relation(fields: [productionOrderId], references: [id])
+
+  quantity          Decimal         @db.Decimal(16, 4)
+  unitOfMeasureId   String
+  unitOfMeasure     UnitOfMeasure   @relation("FgLotUom", fields: [unitOfMeasureId], references: [id])
+  storageLocationId String
+  storageLocation   StorageLocation @relation("FgLotLocation", fields: [storageLocationId], references: [id])
+
+  receivedAt        DateTime        @default(now())
+  notes             String?
+  createdAt         DateTime        @default(now())
+
+  @@index([productionOrderId])
+  @@index([materialId])
+}
