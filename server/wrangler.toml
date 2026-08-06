@@ -2,11 +2,12 @@ name = "bona-erp-api"
 main = "src/worker.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
+account_id = "0fbce6165150f90e7f385e373182204e"
 
-# 路由配置
-[[routes]]
-pattern = "api.bona-official.com/*"
-zone_id = ""  # 填入你的域名 Zone ID
+# 自定义域名路由（需要先在 Cloudflare 添加 bona-official.com 域名后启用）
+# [[routes]]
+# pattern = "api.bona-official.com/*"
+# zone_id = ""
 
 # 环境变量（生产环境）
 [vars]
@@ -31,7 +32,7 @@ JWT_SECRET = ""  # 在 Cloudflare Dashboard 设置
 
 # 环境特定配置
 [env.production]
-routes = [{ pattern = "api.bona-official.com/*", zone_id = "" }]
+# routes = [{ pattern = "api.bona-official.com/*", zone_id = "" }]
 
 [env.staging]
 name = "bona-erp-api-staging"
