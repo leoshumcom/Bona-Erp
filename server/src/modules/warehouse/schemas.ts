@@ -68,6 +68,7 @@ export const outboundReturnStockSchema = z.object({
   quantity: z.number().positive('退料数量必须大于0'),
   unitOfMeasureId: z.string().uuid('单位ID格式无效'),
   storageLocationId: z.string().uuid('库位ID格式无效'),
+  productionOrderComponentId: z.string().uuid().optional(),
   notes: z.string().optional(),
 });
 
