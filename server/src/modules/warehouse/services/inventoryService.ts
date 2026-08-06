@@ -1,4 +1,5 @@
 import { PrismaClient, Prisma } from '@prisma/client';
+import { computeFIFOAllocation, computeFIFOTotalCost, type LotLike } from './fifo';
 
 const prisma = new PrismaClient();
 
@@ -100,7 +101,7 @@ function createLedger(
 }
 
 /**
- * FIFO 选择批次：按 quantityRemaining > 0 且 receivedAt 升序选择
+ * FIFO 选择批次：从 DB 查询后委托纯函数计算分配
  */
 async function selectFIFOLots(
   tx: Prisma.TransactionClient,
@@ -117,23 +118,7 @@ async function selectFIFOLots(
     orderBy: { receivedAt: 'asc' },
   });
 
-  const selected: Array<{ lotId: string; consumeQuantity: Prisma.Decimal; unitCost: Prisma.Decimal }> = [];
-  let remaining = neededQuantity;
-
-  for (const lot of lots) {
-    if (remaining.lte(0)) break;
-    const consume = Prisma.Decimal.min(lot.quantityRemaining, remaining);
-    selected.push({ lotId: lot.id, consumeQuantity: consume, unitCost: lot.unitCost });
-    remaining = Prisma.Decimal.sub(remaining, consume);
-  }
-
-  if (remaining.gt(0)) {
-    throw new Error(
-      `库存不足: 产品 ${productId} 在库位 ${storageLocationId} 可用数量不足，还差 ${remaining.toString()}`
-    );
-  }
-
-  return selected;
+  return computeFIFOAllocation(lots as unknown as LotLike[], neededQuantity);
 }
 
 // ============================================================
